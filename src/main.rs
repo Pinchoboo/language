@@ -3,6 +3,7 @@ extern crate pest;
 extern crate pest_derive;
 
 mod parser;
+mod typecheck;
 
 fn main() {
     match parser::parse_program("fn int main(){

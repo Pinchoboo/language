@@ -8,16 +8,14 @@ lazy_static::lazy_static! {
     static ref PRATT_PARSER: PrattParser<Rule> = {
         use pest::pratt_parser::{Assoc::*, Op};
         use Rule::*;
-
         // Precedence is defined lowest to highest
         PrattParser::new()
-            // Addition and subtract have equal precedence
             .op(Op::infix(or, Left))
             .op(Op::infix(xor, Left))
             .op(Op::infix(and, Left))
             .op(Op::infix(equal, Left) | Op::infix(notEqual, Left))
             .op(Op::infix(greater, Left) | Op::infix(greaterEqual, Left) | Op::infix(smaller, Left) | Op::infix(smallerEqual, Left))
-            //shift here
+            //bit shift here
             .op(Op::infix(add, Left) | Op::infix(subtract, Left))
             .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left))
             .op(Op::prefix(negate) | Op::prefix(invert))
@@ -84,7 +82,6 @@ pub enum Expression<'a> {
 pub enum Value<'a> {
     Number(i32),
     Bool(bool),
-    //Expression(Box<Expression<'a>>),
     Call(Identifier<'a>, Vec<Expression<'a>>),
     Identifier(Identifier<'a>),
 }
@@ -143,27 +140,6 @@ impl<'i> TryFrom<Pair<'i, Rule>> for UnOp {
             Rule::invert => Ok(UnOp::Invert),
             _ => Err(()),
         }
-    }
-}
-
-fn print(i: i32, p: Pair<Rule>) {
-    for _ in 0..i {
-        print!("\t")
-    }
-    print!("{:?} [", p.as_rule());
-    let txt = p.as_str();
-    let inner = p.into_inner();
-    if inner.len() == 0 {
-        println!("{}]", txt);
-    } else {
-        println!();
-        for inner_pair in inner {
-            print(i + 1, inner_pair);
-        }
-        for _ in 0..i {
-            print!("\t");
-        }
-        println!("]");
     }
 }
 
@@ -317,9 +293,7 @@ fn parse_block(pair: Pair<Rule>) -> Block {
 fn parse_expression(pair: Pair<Rule>) -> Expression {
     assert_eq!(pair.as_rule(), Rule::expression);
     PRATT_PARSER
-        .map_primary(|value| {
-            Expression::Value(parse_value(value))
-        })
+        .map_primary(|value| Expression::Value(parse_value(value)))
         .map_infix(|lhs, op, rhs| {
             let rule = op.as_rule();
             Expression::Binary(
