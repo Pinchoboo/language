@@ -172,7 +172,6 @@ pub fn parse_program(program: &str) -> Result<Program, Box<Error<Rule>>> {
         .map_err(Box::new)?
         .next()
         .unwrap();
-    print(0, pest_program.clone());
     Ok(Program {
         functions: pest_program.into_inner().map(parse_function).collect(),
     })
@@ -229,7 +228,6 @@ fn parse_block(pair: Pair<Rule>) -> Block {
     assert_eq!(pair.as_rule(), Rule::block);
     pair.into_inner()
         .map(|sp: Pair<Rule>| {
-            print(0, sp.clone());
             match sp.as_rule() {
                 Rule::r#if => {
                     let mut inner = sp.into_inner();
@@ -318,12 +316,8 @@ fn parse_block(pair: Pair<Rule>) -> Block {
 
 fn parse_expression(pair: Pair<Rule>) -> Expression {
     assert_eq!(pair.as_rule(), Rule::expression);
-    println!("parse_expression ->");
-    print(0, pair.clone());
     PRATT_PARSER
         .map_primary(|value| {
-            println!("primary");
-            print(0, value.clone());
             Expression::Value(parse_value(value))
         })
         .map_infix(|lhs, op, rhs| {
