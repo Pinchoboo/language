@@ -1,0 +1,107 @@
+COMMENT    = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+alpha = _{ 'a'..'z' | 'A'..'Z' }
+digit = _{ '0'..'9' }
+
+integer = @{ ASCII_DIGIT+ }
+float   = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+
+number = { float | integer }
+
+boolean = { true | false }
+true    = { "true" }
+false   = { "false" }
+
+type      = { intType | floatType | boolType | charType | unitType }
+intType   = { "int" }
+floatType = { "float" }
+boolType  = { "bool" }
+charType  = { "char" }
+unitType  = { "()" }
+
+reserved        =  { type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword }
+functionKeyword = _{ "fn" }
+whileKeyword    = _{ "while" }
+ifKeyword       = _{ "if" }
+elseKeyword     = _{ "else" }
+returnKeyword   = _{ "return" }
+
+identifier = @{
+    !reserved ~ (alpha ~ (alpha | digit)*)
+}
+
+call = {
+    identifier ~ "(" ~ (expression ~ ("," ~ expression)*)? ~ ")"
+}
+
+value = _{
+    number
+  | boolean
+  | "(" ~ expression ~ ")"
+  | call
+  | identifier
+}
+atom  = _{ unop? ~ value }
+
+expression = {
+    atom ~ (binop ~ atom)*
+}
+
+binop = {
+    add
+  | subtract
+  | multiply
+  | divide
+  | modulo
+  | or
+  | and
+  | xor
+  | equal
+  | notEqual
+  | greater
+  | smaller
+  | greaterEqual
+  | smallerEqual
+}
+add          = { "+" }
+subtract     = { "-" }
+multiply     = { "*" }
+divide       = { "/" }
+modulo       = { "%" }
+or           = { "|" }
+and          = { "&" }
+xor          = { "^" }
+equal        = { "==" }
+notEqual     = { "!=" }
+greater      = { ">" }
+smaller      = { "<" }
+greaterEqual = { ">=" }
+smallerEqual = { "<=" }
+
+unop   = {
+    negate
+  | invert
+}
+negate = { "-" }
+invert = { "!" }
+
+assignment = {
+    type? ~ identifier ~ "=" ~ expression
+}
+
+scope    = _{ "{" ~ block ~ "}" }
+if       =  { ifKeyword ~ expression ~ scope ~ (elseKeyword ~ ifKeyword ~ expression ~ scope)* ~ (elseKeyword ~ scope)? }
+while    =  { whileKeyword ~ expression ~ scope }
+function =  { functionKeyword ~ type? ~ identifier ~ "(" ~ (type ~ identifier ~ ("," ~ type ~ identifier)*)? ~ ")" ~ scope }
+
+returnStatement = { (returnKeyword ~ expression) }
+
+/// no nested functions and nested scopes for now
+block = {
+    (if | while | assignment | call)* ~ returnStatement?
+}
+
+program = {
+    SOI ~ function* ~ (&EOI ~ ANY*)
+}
