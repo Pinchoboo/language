@@ -1,4 +1,4 @@
-use pest::{error::Error, iterators::Pair, Parser, pratt_parser::PrattParser};
+use pest::{error::Error, iterators::Pair, pratt_parser::PrattParser, Parser};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -12,13 +12,13 @@ lazy_static::lazy_static! {
         // Precedence is defined lowest to highest
         PrattParser::new()
             // Addition and subtract have equal precedence
-			.op(Op::infix(or, Left))
-			.op(Op::infix(xor, Left))
-			.op(Op::infix(and, Left))
-			.op(Op::infix(equal, Left) | Op::infix(notEqual, Left))
-			.op(Op::infix(greater, Left) | Op::infix(greaterEqual, Left) | Op::infix(smaller, Left) | Op::infix(smallerEqual, Left))
+            .op(Op::infix(or, Left))
+            .op(Op::infix(xor, Left))
+            .op(Op::infix(and, Left))
+            .op(Op::infix(equal, Left) | Op::infix(notEqual, Left))
+            .op(Op::infix(greater, Left) | Op::infix(greaterEqual, Left) | Op::infix(smaller, Left) | Op::infix(smallerEqual, Left))
             //shift here
-			.op(Op::infix(add, Left) | Op::infix(subtract, Left))
+            .op(Op::infix(add, Left) | Op::infix(subtract, Left))
             .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left))
             .op(Op::prefix(negate) | Op::prefix(invert))
     };
@@ -35,6 +35,24 @@ pub enum Type {
     Bool,
     Char,
     Unit,
+}
+
+impl<'i> TryFrom<Pair<'i, Rule>> for Type {
+    type Error = ();
+    fn try_from(value: Pair<Rule>) -> Result<Self, Self::Error> {
+        if value.as_rule() == Rule::r#type {
+            match value.into_inner().next().ok_or(())?.as_rule() {
+                Rule::intType => Ok(Type::Int),
+                Rule::floatType => Ok(Type::Float),
+                Rule::boolType => Ok(Type::Bool),
+                Rule::charType => Ok(Type::Char),
+                Rule::unitType => Ok(Type::Unit),
+                _ => Err(()),
+            }
+        } else {
+            Err(())
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -58,15 +76,15 @@ pub enum Statement<'a> {
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expression<'a> {
-    Binary(Value<'a>, BinOp, Box<Expression<'a>>),
-    Unary(UnOp, Value<'a>),
+    Binary(Box<Expression<'a>>, BinOp, Box<Expression<'a>>),
+    Unary(UnOp, Box<Expression<'a>>),
     Value(Value<'a>),
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Value<'a> {
     Number(i32),
     Bool(bool),
-    Expression(Box<Expression<'a>>),
+    //Expression(Box<Expression<'a>>),
     Call(Identifier<'a>, Vec<Expression<'a>>),
     Identifier(Identifier<'a>),
 }
@@ -88,18 +106,41 @@ pub enum BinOp {
     SmallerEqual,
 }
 
+impl<'i> TryFrom<Pair<'i, Rule>> for BinOp {
+    type Error = ();
+    fn try_from(value: Pair<Rule>) -> Result<Self, Self::Error> {
+        match value.as_rule() {
+            Rule::add => Ok(BinOp::Add),
+            Rule::subtract => Ok(BinOp::Subtract),
+            Rule::multiply => Ok(BinOp::Multiply),
+            Rule::divide => Ok(BinOp::Divide),
+            Rule::modulo => Ok(BinOp::Modulo),
+            Rule::or => Ok(BinOp::Or),
+            Rule::and => Ok(BinOp::And),
+            Rule::xor => Ok(BinOp::Xor),
+            Rule::equal => Ok(BinOp::Equal),
+            Rule::notEqual => Ok(BinOp::NotEqual),
+            Rule::greater => Ok(BinOp::Greater),
+            Rule::greaterEqual => Ok(BinOp::GreaterEqual),
+            Rule::smaller => Ok(BinOp::Smaller),
+            Rule::smallerEqual => Ok(BinOp::SmallerEqual),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum UnOp {
     Negate,
     Invert,
 }
 
-impl TryFrom<&str> for UnOp {
+impl<'i> TryFrom<Pair<'i, Rule>> for UnOp {
     type Error = ();
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "!" => Ok(UnOp::Invert),
-            "-" => Ok(UnOp::Negate),
+    fn try_from(value: Pair<Rule>) -> Result<Self, Self::Error> {
+        match value.as_rule() {
+            Rule::negate => Ok(UnOp::Negate),
+            Rule::invert => Ok(UnOp::Invert),
             _ => Err(()),
         }
     }
@@ -126,20 +167,15 @@ fn print(i: i32, p: Pair<Rule>) {
     }
 }
 
-#[derive(Debug)]
-pub enum ParseError {
-    PestError(Error<Rule>),
-}
-
-pub fn parse_program(program: &str) -> Result<Program, ParseError> {
+pub fn parse_program(program: &str) -> Result<Program, Box<Error<Rule>>> {
     let pest_program: Pair<Rule> = LanguageParser::parse(Rule::program, program)
-        .map_err(ParseError::PestError)?
+        .map_err(Box::new)?
         .next()
         .unwrap();
-    let program = Program {
+    print(0, pest_program.clone());
+    Ok(Program {
         functions: pest_program.into_inner().map(parse_function).collect(),
-    };
-    Ok(program)
+    })
 }
 
 fn parse_function(pair: Pair<Rule>) -> Function {
@@ -150,9 +186,10 @@ fn parse_function(pair: Pair<Rule>) -> Function {
 
     let mut return_type = Type::Unit;
     if let Rule::r#type = current.as_rule() {
-        return_type = Type::try_from(current.as_str()).expect("valid type");
+        return_type = Type::try_from(current).expect("valid type");
         current = inner.next().expect("function should have more subpairs");
     }
+
     assert_eq!(current.as_rule(), Rule::identifier);
     let identifier = current.as_str();
 
@@ -171,7 +208,7 @@ fn parse_function(pair: Pair<Rule>) -> Function {
             {
                 current = inner.next().expect("argument should have a type");
                 assert_eq!(current.as_rule(), Rule::r#type);
-                Type::try_from(current.as_str()).expect("valid type")
+                Type::try_from(current).expect("valid type")
             },
             {
                 current = inner.next().expect("argument should have a name");
@@ -237,9 +274,10 @@ fn parse_block(pair: Pair<Rule>) -> Block {
                     Statement::Assignment(
                         {
                             if let Rule::r#type = current.as_rule() {
-								let s = current.as_str();
-								current = inner.next().expect("assignment should have an identifier");
-                                Some(Type::try_from(s).expect("valid type"))
+                                let old = current;
+                                current =
+                                    inner.next().expect("assignment should have an identifier");
+                                Some(Type::try_from(old).expect("valid type"))
                             } else {
                                 None
                             }
@@ -279,64 +317,41 @@ fn parse_block(pair: Pair<Rule>) -> Block {
 }
 
 fn parse_expression(pair: Pair<Rule>) -> Expression {
-    match pair.as_rule() {
-        Rule::value => Expression::Value(parse_value(
-            pair.into_inner()
-                .next()
-                .expect("value to contain something"),
-        )),
-        Rule::unnexpression => {
-            let mut inner = pair.into_inner();
-            Expression::Unary(
-                {
-                    let uo = inner
-                        .next()
-                        .expect("unary expression should have a unary operator");
-                    assert_eq!(uo.as_rule(), Rule::unop);
-                    UnOp::try_from(uo.as_str()).expect("valid unary operator")
-                },
-                {
-                    let uv = inner.next().expect("unary expression should have a value");
-                    assert_eq!(uv.as_rule(), Rule::value);
-                    parse_value(uv)
-                },
-            )
-        }
-        Rule::binexpression => {
-            let mut inner = pair.into_inner();
+    assert_eq!(pair.as_rule(), Rule::expression);
+    println!("parse_expression ->");
+    print(0, pair.clone());
+    PRATT_PARSER
+        .map_primary(|value| {
+            println!("primary");
+            print(0, value.clone());
+            Expression::Value(parse_value(value))
+        })
+        .map_infix(|lhs, op, rhs| {
+            let rule = op.as_rule();
             Expression::Binary(
-                {
-                    let bv = inner.next().expect("binary expression should have a value");
-                    assert_eq!(bv.as_rule(), Rule::value);
-                    parse_value(bv)
-                },
-                {
-                    let bv = inner
-                        .next()
-                        .expect("binary expression should have a unary operator");
-                    assert_eq!(bv.as_rule(), Rule::binop);
-                    BinOp::try_from(bv.as_str()).expect("valid binary operator")
-                },
-                {
-                    let be = inner.next().expect("binary expression should have a value");
-                    Box::new(parse_expression(be))
-                },
+                Box::new(lhs),
+                BinOp::try_from(op)
+                    .unwrap_or_else(|_| panic!("expected infix operation, found {:?}", rule)),
+                Box::new(rhs),
             )
-        }
-        _ => {
-            panic!("unreachable")
-        }
-    }
+        })
+        .map_prefix(|op, rhs| {
+            let rule = op.as_rule();
+            Expression::Unary(
+                UnOp::try_from(op)
+                    .unwrap_or_else(|_| panic!("expected unary operation, found {:?}", rule)),
+                Box::new(rhs),
+            )
+        })
+        .parse(pair.into_inner())
 }
 
 fn parse_value(pair: Pair<Rule>) -> Value {
     match pair.as_rule() {
+        //todo handle float
         Rule::number => Value::Number(pair.as_str().parse::<i32>().expect("int")),
         Rule::boolean => Value::Bool(pair.as_str().parse::<bool>().expect("bool")),
         Rule::identifier => Value::Identifier(pair.as_str()),
-        Rule::binexpression | Rule::unnexpression | Rule::value => {
-            Value::Expression(Box::new(parse_expression(pair)))
-        }
         Rule::call => {
             let mut inner = pair.into_inner();
             Value::Call(
@@ -350,27 +365,6 @@ fn parse_value(pair: Pair<Rule>) -> Value {
                 inner.map(parse_expression).collect(),
             )
         }
-        _ => {
-            panic!("unreachable")
-        }
-    }
-}
-pub fn test() {
-    let pairs = LanguageParser::parse(
-        Rule::program,
-        "
-	fn main(){
-		if true{}else if false{}else{}
-		int ident = 1+2 
-		while true{}
-		selfdefined(-1,true)
-	}",
-    )
-    .unwrap_or_else(|e| panic!("{}", e));
-    // Because ident_list is silent, the iterator will contain idents
-    for pair in pairs {
-        // A pair is a combination of the rule which matched and a span of input
-        print(0, pair);
-        println!();
+        _ => panic!("unreachable"),
     }
 }

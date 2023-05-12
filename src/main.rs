@@ -5,11 +5,8 @@ extern crate pest_derive;
 mod parser;
 
 fn main() {
-    match parser::parse_program("fn main(){
-		if true{}else if false{}else{}
-		int ident = 1+2 
-		while true{}
-		selfdefined(-1,true)
+    match parser::parse_program("fn int main(){
+		int a = 1 * 2 + 2 * 3
 	}") {
         Ok(p) => {dbg!(p);},
         Err(e) => {dbg!(e);},

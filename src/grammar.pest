@@ -48,7 +48,7 @@ expression = {
     atom ~ (binop ~ atom)*
 }
 
-binop = {
+binop = _{
     add
   | subtract
   | multiply
@@ -79,7 +79,7 @@ smaller      = { "<" }
 greaterEqual = { ">=" }
 smallerEqual = { "<=" }
 
-unop   = {
+unop = _{
     negate
   | invert
 }
@@ -95,11 +95,11 @@ if       =  { ifKeyword ~ expression ~ scope ~ (elseKeyword ~ ifKeyword ~ expres
 while    =  { whileKeyword ~ expression ~ scope }
 function =  { functionKeyword ~ type? ~ identifier ~ "(" ~ (type ~ identifier ~ ("," ~ type ~ identifier)*)? ~ ")" ~ scope }
 
-returnStatement = { (returnKeyword ~ expression) }
+return = { (returnKeyword ~ expression) }
 
 /// no nested functions and nested scopes for now
 block = {
-    (if | while | assignment | call)* ~ returnStatement?
+    (if | while | assignment | call)* ~ return?
 }
 
 program = {
