@@ -77,7 +77,21 @@ pub struct Function<'a> {
     body: Block<'a>,
 }
 pub type Identifier<'a> = &'a str;
-pub type Block<'a> = Vec<Statement<'a>>;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Block<'a> {
+    blockinfo: BlockInfo,
+    statements: Vec<Statement<'a>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct BlockInfo {}
+impl BlockInfo {
+    fn new() -> BlockInfo {
+        BlockInfo {}
+    }
+}
+
 pub type ConditionalBlock<'a> = (Expression<'a>, Block<'a>);
 pub type Argument<'a> = (Type, Identifier<'a>);
 
@@ -263,133 +277,148 @@ impl<'a> FileParser {
     fn parse_block(&'a self, pair: Pair<'a, Rule>) -> Block {
         assert_eq!(pair.as_rule(), Rule::block);
         let span = pair.as_span();
-
-        pair.into_inner()
-            .map(|sp: Pair<Rule>| {
-                match sp.as_rule() {
-                    Rule::r#if => {
-                        let mut inner = sp.into_inner();
-                        Statement {
-                            pos: Possition {
-                                filename: &self.path,
-                                span,
-                            },
-                            statement: StatementType::If(
-                                (
+        Block {
+            blockinfo: BlockInfo::new(),
+            statements: pair
+                .into_inner()
+                .map(|sp: Pair<Rule>| {
+                    match sp.as_rule() {
+                        Rule::r#if => {
+                            let mut inner = sp.into_inner();
+                            Statement {
+                                pos: Possition {
+                                    filename: &self.path,
+                                    span,
+                                },
+                                statement: StatementType::If(
+                                    (
+                                        self.parse_expression(
+                                            inner.next().expect("if should have a condition"),
+                                        ),
+                                        self.parse_block(
+                                            inner.next().expect("if should have a code block"),
+                                        ),
+                                    ),
+                                    {
+                                        let mut elseif = vec![];
+                                        while inner.len() >= 2 {
+                                            elseif.push((
+                                                {
+                                                    let c = inner
+                                                        .next()
+                                                        .expect("else if should have a condition");
+                                                    //assert_eq!(c.as_rule(), Rule::expression);
+                                                    self.parse_expression(c)
+                                                },
+                                                {
+                                                    let b = inner
+                                                        .next()
+                                                        .expect("else if should have a code block");
+                                                    assert_eq!(b.as_rule(), Rule::block);
+                                                    self.parse_block(b)
+                                                },
+                                            ));
+                                        }
+                                        elseif
+                                    },
+                                    inner.next().map_or(
+                                        Block {
+                                            statements: Vec::new(),
+                                            blockinfo: BlockInfo::new(),
+                                        },
+                                        |b| self.parse_block(b),
+                                    ),
+                                ),
+                            }
+                        }
+                        Rule::r#while => {
+                            let mut inner = sp.into_inner();
+                            Statement {
+                                pos: Possition {
+                                    filename: &self.path,
+                                    span,
+                                },
+                                statement: StatementType::While((
                                     self.parse_expression(
-                                        inner.next().expect("if should have a condition"),
+                                        inner.next().expect("while should have a condition"),
                                     ),
                                     self.parse_block(
-                                        inner.next().expect("if should have a code block"),
+                                        inner.next().expect("while should have a code block"),
                                     ),
-                                ),
-                                {
-                                    let mut elseif = vec![];
-                                    while inner.len() >= 2 {
-                                        elseif.push((
-                                            {
-                                                let c = inner
-                                                    .next()
-                                                    .expect("else if should have a condition");
-                                                //assert_eq!(c.as_rule(), Rule::expression);
-                                                self.parse_expression(c)
-                                            },
-                                            {
-                                                let b = inner
-                                                    .next()
-                                                    .expect("else if should have a code block");
-                                                assert_eq!(b.as_rule(), Rule::block);
-                                                self.parse_block(b)
-                                            },
-                                        ));
-                                    }
-                                    elseif
+                                )),
+                            }
+                        }
+                        Rule::assignment => {
+                            let mut inner = sp.into_inner();
+                            let mut current =
+                                inner.next().expect("assignment should have a sub pair");
+                            Statement {
+                                pos: Possition {
+                                    filename: &self.path,
+                                    span,
                                 },
-                                inner.next().map_or(vec![], |b| self.parse_block(b)),
-                            ),
-                        }
-                    }
-                    Rule::r#while => {
-                        let mut inner = sp.into_inner();
-                        Statement {
-                            pos: Possition {
-                                filename: &self.path,
-                                span,
-                            },
-                            statement: StatementType::While((
-                                self.parse_expression(
-                                    inner.next().expect("while should have a condition"),
+                                statement: StatementType::Assignment(
+                                    {
+                                        if let Rule::r#type = current.as_rule() {
+                                            let old = current;
+                                            current = inner
+                                                .next()
+                                                .expect("assignment should have an identifier");
+                                            Some(Type::try_from(old).expect("valid type"))
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                    current.as_str(),
+                                    {
+                                        self.parse_expression(
+                                            inner
+                                                .next()
+                                                .expect("assignment should have a variable"),
+                                        )
+                                    },
                                 ),
-                                self.parse_block(
-                                    inner.next().expect("while should have a code block"),
-                                ),
-                            )),
+                            }
                         }
-                    }
-                    Rule::assignment => {
-                        let mut inner = sp.into_inner();
-                        let mut current = inner.next().expect("assignment should have a sub pair");
-                        Statement {
-                            pos: Possition {
-                                filename: &self.path,
-                                span,
-                            },
-                            statement: StatementType::Assignment(
-                                {
-                                    if let Rule::r#type = current.as_rule() {
-                                        let old = current;
-                                        current = inner
+                        Rule::call => {
+                            let mut inner = sp.into_inner();
+                            Statement {
+                                pos: Possition {
+                                    filename: &self.path,
+                                    span,
+                                },
+                                statement: StatementType::Call(
+                                    {
+                                        let id = inner
                                             .next()
-                                            .expect("assignment should have an identifier");
-                                        Some(Type::try_from(old).expect("valid type"))
-                                    } else {
-                                        None
-                                    }
-                                },
-                                current.as_str(),
-                                {
-                                    self.parse_expression(
-                                        inner.next().expect("assignment should have a variable"),
-                                    )
-                                },
-                            ),
+                                            .expect("function call should have an identifier");
+                                        assert_eq!(id.as_rule(), Rule::identifier);
+                                        id.as_str()
+                                    },
+                                    inner.map(|e| self.parse_expression(e)).collect(),
+                                ),
+                            }
                         }
-                    }
-                    Rule::call => {
-                        let mut inner = sp.into_inner();
-                        Statement {
+                        Rule::r#return => Statement {
                             pos: Possition {
                                 filename: &self.path,
                                 span,
                             },
-                            statement: StatementType::Call(
-                                {
-                                    let id = inner
+                            statement: StatementType::Return(
+                                self.parse_expression(
+                                    sp.into_inner()
                                         .next()
-                                        .expect("function call should have an identifier");
-                                    assert_eq!(id.as_rule(), Rule::identifier);
-                                    id.as_str()
-                                },
-                                inner.map(|e|self.parse_expression(e)).collect(),
+                                        .expect("assignment should have a variable"),
+                                ),
                             ),
+                        },
+                        _ => {
+                            panic!("unreachable")
                         }
                     }
-                    Rule::r#return => Statement {
-                        pos: Possition {
-                            filename: &self.path,
-                            span,
-                        },
-                        statement: StatementType::Return(self.parse_expression(
-                        sp.into_inner()
-                            .next()
-                            .expect("assignment should have a variable"),
-                    ))},
-                    _ => {
-                        panic!("unreachable")
-                    }
-                }
-            })
-            .collect()
+                })
+                .collect(),
+        }
     }
 
     fn parse_expression(&'a self, pair: Pair<'a, Rule>) -> Expression {
