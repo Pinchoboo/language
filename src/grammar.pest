@@ -59,10 +59,10 @@ binop = _{
   | xor
   | equal
   | notEqual
-  | greater
-  | smaller
   | greaterEqual
   | smallerEqual
+  | greater
+  | smaller
 }
 add          = { "+" }
 subtract     = { "-" }
