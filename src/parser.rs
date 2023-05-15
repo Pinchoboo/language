@@ -2,10 +2,13 @@ use std::{
     fmt::Debug,
     fs::File,
     io::Read,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf}, cell::RefCell, rc::Rc,
 };
 
+use derivative::Derivative;
 use pest::{error::Error, iterators::Pair, pratt_parser::PrattParser, Parser, Span};
+
+use crate::typecheck::ScopeInfo;
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -35,13 +38,16 @@ pub struct Possition<'a> {
     span: Span<'a>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct Program<'a> {
-    pos: Possition<'a>,
-    functions: Vec<Function<'a>>,
+	#[derivative(Debug="ignore")]
+    pub pos: Possition<'a>,
+    pub scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
+    pub functions: Vec<Function<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Type {
     Int,
     Float,
@@ -68,45 +74,41 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct Function<'a> {
-    pos: Possition<'a>,
-    identifier: Identifier<'a>,
-    return_type: Type,
-    arguments: Vec<Argument<'a>>,
-    body: Block<'a>,
+	#[derivative(Debug="ignore")]
+    pub pos: Possition<'a>,
+    pub identifier: Identifier<'a>,
+    pub return_type: Type,
+    pub arguments: Vec<Argument<'a>>,
+    pub body: Block<'a>,
 }
 pub type Identifier<'a> = &'a str;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Block<'a> {
-    blockinfo: BlockInfo,
-    statements: Vec<Statement<'a>>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct BlockInfo {}
-impl BlockInfo {
-    fn new() -> BlockInfo {
-        BlockInfo {}
-    }
+    pub scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
+    pub statements: Vec<Statement<'a>>,
 }
 
 pub type ConditionalBlock<'a> = (Expression<'a>, Block<'a>);
 pub type Argument<'a> = (Type, Identifier<'a>);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct Statement<'a> {
-    pos: Possition<'a>,
-    statement: StatementType<'a>,
+	#[derivative(Debug="ignore")]
+    pub pos: Possition<'a>,
+    pub statement: StatementType<'a>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StatementType<'a> {
     If(ConditionalBlock<'a>, Vec<ConditionalBlock<'a>>, Block<'a>),
     While(ConditionalBlock<'a>),
-    Assignment(Option<Type>, Identifier<'a>, Expression<'a>),
-    Call(Identifier<'a>, Vec<Expression<'a>>),
+    Assignment(Option<Type>, Identifier<'a>, Expression<'a>, Option<i32>),
+    Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Return(Expression<'a>),
 }
 
@@ -120,10 +122,10 @@ pub enum Expression<'a> {
 pub enum Value<'a> {
     Number(i32),
     Bool(bool),
-    Call(Identifier<'a>, Vec<Expression<'a>>),
-    Identifier(Identifier<'a>),
+    Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
+    Identifier(Identifier<'a>, Option<i32>),
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BinOp {
     Add,
     Subtract,
@@ -164,7 +166,7 @@ impl<'i> TryFrom<Pair<'i, Rule>> for BinOp {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum UnOp {
     Negate,
     Invert,
@@ -218,6 +220,7 @@ impl<'a> FileParser {
                 .into_inner()
                 .map(|p| self.parse_function(p))
                 .collect(),
+            scopeinfo: Rc::new(RefCell::new(ScopeInfo::default())),
         })
     }
 
@@ -278,7 +281,7 @@ impl<'a> FileParser {
         assert_eq!(pair.as_rule(), Rule::block);
         let span = pair.as_span();
         Block {
-            blockinfo: BlockInfo::new(),
+			scopeinfo : Rc::new(RefCell::new(ScopeInfo::default())),
             statements: pair
                 .into_inner()
                 .map(|sp: Pair<Rule>| {
@@ -323,8 +326,8 @@ impl<'a> FileParser {
                                     },
                                     inner.next().map_or(
                                         Block {
+											scopeinfo : Rc::new(RefCell::new(ScopeInfo::default())),
                                             statements: Vec::new(),
-                                            blockinfo: BlockInfo::new(),
                                         },
                                         |b| self.parse_block(b),
                                     ),
@@ -377,6 +380,7 @@ impl<'a> FileParser {
                                                 .expect("assignment should have a variable"),
                                         )
                                     },
+									None
                                 ),
                             }
                         }
@@ -396,6 +400,7 @@ impl<'a> FileParser {
                                         id.as_str()
                                     },
                                     inner.map(|e| self.parse_expression(e)).collect(),
+									None
                                 ),
                             }
                         }
@@ -450,7 +455,7 @@ impl<'a> FileParser {
             //todo handle float
             Rule::number => Value::Number(pair.as_str().parse::<i32>().expect("int")),
             Rule::boolean => Value::Bool(pair.as_str().parse::<bool>().expect("bool")),
-            Rule::identifier => Value::Identifier(pair.as_str()),
+            Rule::identifier => Value::Identifier(pair.as_str(), None),
             Rule::call => {
                 let mut inner = pair.into_inner();
                 Value::Call(
@@ -462,6 +467,7 @@ impl<'a> FileParser {
                         id.as_str()
                     },
                     inner.map(|e| self.parse_expression(e)).collect(),
+					None
                 )
             }
             _ => panic!("unreachable"),

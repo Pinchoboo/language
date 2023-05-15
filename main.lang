@@ -1,10 +1,10 @@
 fn main() {
-    print(fib(10))
+    fib(10)
 }
 
 fn int fib(int a){
-    if a <= 2 {
-        return 1
-    }
+	if a <= 1 {
+		return 1
+	}
     return fib(a-1) + fib(a-2)
 }
