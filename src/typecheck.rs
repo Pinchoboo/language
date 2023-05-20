@@ -54,10 +54,10 @@ pub struct TypeCheckContext<'a> {
 #[derive(Derivative, PartialEq, Eq, Default)]
 #[derivative(Debug)]
 pub struct ScopeInfo<'a> {
-    variables: Vec<(Identifier<'a>, Type, i32)>,
-    functions: Vec<(Identifier<'a>, Vec<Type>, Type, i32)>,
+    pub variables: Vec<(Identifier<'a>, Type, i32)>,
+    pub functions: Vec<(Identifier<'a>, Vec<Type>, Type, i32)>,
     #[derivative(Debug = "ignore")]
-    previous: Option<Rc<RefCell<ScopeInfo<'a>>>>,
+    pub previous: Option<Rc<RefCell<ScopeInfo<'a>>>>,
 }
 
 pub fn typecheck(ast: &mut Program) {
@@ -143,6 +143,7 @@ impl<'a> TypeCheckContext<'a> {
                     if self.check_expression(expr, block.scopeinfo.clone())
                         != if t.is_none() {
                             //if updating a value
+                            //todo maybe give new numeric id
                             if let Some(v) = find_variable(id, block.scopeinfo.clone()) {
                                 *o = Some(v.2);
                                 v.1
@@ -165,6 +166,7 @@ impl<'a> TypeCheckContext<'a> {
                                 t.unwrap(),
                                 self.next_id,
                             ));
+                            *o=Some(self.next_id);
                             self.next_id += 1;
                             *t.as_ref().unwrap()
                         }
@@ -281,8 +283,8 @@ impl<'a> TypeCheckContext<'a> {
     }
 }
 
-fn find_variable<'a>(
-    id: Identifier<'a>,
+pub fn find_variable<'a>(
+    id: Identifier<'_>,
     si: Rc<RefCell<ScopeInfo<'a>>>,
 ) -> Option<(&'a str, Type, i32)> {
     let mut si = Some(si);
@@ -295,8 +297,8 @@ fn find_variable<'a>(
     None
 }
 
-fn find_function<'a>(
-    id: Identifier<'a>,
+pub fn find_function<'a>(
+    id: Identifier<'_>,
     si: Rc<RefCell<ScopeInfo<'a>>>,
 ) -> Option<(&'a str, Vec<Type>, Type, i32)> {
     let mut si = Some(si);
