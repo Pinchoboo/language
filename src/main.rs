@@ -7,14 +7,15 @@ extern crate pest_derive;
 
 mod parser;
 mod typecheck;
+mod compile;
 
 fn main() {
-    let path = "./main.lang";
-    let fp = parser::FileParser::new(path).unwrap();
+    let fp = parser::FileParser::new("./main.lang").unwrap();
     let mut ast = fp.parse().expect("no parsing problems");
 	typecheck::typecheck(&mut ast);
-    File::create(path.to_owned() + ".ast")
+    File::create("./out/main.lang.ast")
         .expect("no problems opening/creating file")
         .write_all(format!("{:#?}", ast).as_bytes())
         .expect("no problems writing to the file");
+    let _ = compile::compile(ast);
 }
