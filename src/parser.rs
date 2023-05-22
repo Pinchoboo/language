@@ -1,8 +1,10 @@
 use std::{
+    cell::RefCell,
     fmt::Debug,
     fs::File,
     io::Read,
-    path::{Path, PathBuf}, cell::RefCell, rc::Rc,
+    path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use derivative::Derivative;
@@ -41,7 +43,7 @@ pub struct Possition<'a> {
 #[derive(Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct Program<'a> {
-	#[derivative(Debug="ignore")]
+    #[derivative(Debug = "ignore")]
     pub pos: Possition<'a>,
     pub scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
     pub functions: Vec<Function<'a>>,
@@ -77,7 +79,7 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type {
 #[derive(Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct Function<'a> {
-	#[derivative(Debug="ignore")]
+    #[derivative(Debug = "ignore")]
     pub pos: Possition<'a>,
     pub identifier: Identifier<'a>,
     pub return_type: Type,
@@ -98,7 +100,7 @@ pub type Argument<'a> = (Type, Identifier<'a>);
 #[derive(Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct Statement<'a> {
-	#[derivative(Debug="ignore")]
+    #[derivative(Debug = "ignore")]
     pub pos: Possition<'a>,
     pub statement: StatementType<'a>,
 }
@@ -114,9 +116,24 @@ pub enum StatementType<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expression<'a> {
-    Binary(Box<Expression<'a>>, BinOp, Box<Expression<'a>>),
-    Unary(UnOp, Box<Expression<'a>>),
-    Value(Value<'a>),
+    Binary(
+        Box<Expression<'a>>,
+        BinOp,
+        Box<Expression<'a>>,
+        Option<Type>,
+    ),
+    Unary(UnOp, Box<Expression<'a>>, Option<Type>),
+    Value(Value<'a>, Option<Type>),
+}
+
+impl<'a> Expression<'a> {
+    pub fn get_type(&self) -> Type {
+        match self {
+            Expression::Binary(_, _, _, t) => t,
+            Expression::Unary(_, _, t) => t,
+            Expression::Value(_, t) => t,
+        }.unwrap()
+    }
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Value<'a> {
@@ -124,6 +141,7 @@ pub enum Value<'a> {
     Bool(bool),
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Identifier(Identifier<'a>, Option<i32>),
+	Char(char)
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BinOp {
@@ -281,7 +299,7 @@ impl<'a> FileParser {
         assert_eq!(pair.as_rule(), Rule::block);
         let span = pair.as_span();
         Block {
-			scopeinfo : Rc::new(RefCell::new(ScopeInfo::default())),
+            scopeinfo: Rc::new(RefCell::new(ScopeInfo::default())),
             statements: pair
                 .into_inner()
                 .map(|sp: Pair<Rule>| {
@@ -326,7 +344,7 @@ impl<'a> FileParser {
                                     },
                                     inner.next().map_or(
                                         Block {
-											scopeinfo : Rc::new(RefCell::new(ScopeInfo::default())),
+                                            scopeinfo: Rc::new(RefCell::new(ScopeInfo::default())),
                                             statements: Vec::new(),
                                         },
                                         |b| self.parse_block(b),
@@ -380,7 +398,7 @@ impl<'a> FileParser {
                                                 .expect("assignment should have a variable"),
                                         )
                                     },
-									None
+                                    None,
                                 ),
                             }
                         }
@@ -400,7 +418,7 @@ impl<'a> FileParser {
                                         id.as_str()
                                     },
                                     inner.map(|e| self.parse_expression(e)).collect(),
-									None
+                                    None,
                                 ),
                             }
                         }
@@ -429,7 +447,7 @@ impl<'a> FileParser {
     fn parse_expression(&'a self, pair: Pair<'a, Rule>) -> Expression {
         assert_eq!(pair.as_rule(), Rule::expression);
         PRATT_PARSER
-            .map_primary(|value| Expression::Value(self.parse_value(value)))
+            .map_primary(|value| Expression::Value(self.parse_value(value), None))
             .map_infix(|lhs, op, rhs| {
                 let rule = op.as_rule();
                 Expression::Binary(
@@ -437,6 +455,7 @@ impl<'a> FileParser {
                     BinOp::try_from(op)
                         .unwrap_or_else(|_| panic!("expected infix operation, found {:?}", rule)),
                     Box::new(rhs),
+                    None,
                 )
             })
             .map_prefix(|op, rhs| {
@@ -445,6 +464,7 @@ impl<'a> FileParser {
                     UnOp::try_from(op)
                         .unwrap_or_else(|_| panic!("expected unary operation, found {:?}", rule)),
                     Box::new(rhs),
+                    None,
                 )
             })
             .parse(pair.into_inner())
@@ -467,9 +487,12 @@ impl<'a> FileParser {
                         id.as_str()
                     },
                     inner.map(|e| self.parse_expression(e)).collect(),
-					None
+                    None,
                 )
             }
+			Rule::char => {
+				Value::Char(pair.as_str().chars().nth(1).unwrap())
+			}
             _ => panic!("unreachable"),
         }
     }

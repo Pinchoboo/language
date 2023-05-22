@@ -6,7 +6,7 @@ use std::{
 
 use derivative::Derivative;
 
-use crate::parser::{BinOp, Block, Expression, Identifier, Program, Type, UnOp, Value};
+use crate::parser::{BinOp, Block, Expression, Function, Identifier, Program, Type, UnOp, Value};
 
 lazy_static::lazy_static! {
     static ref UNARY_TABLE: HashMap<(UnOp, Type), Type> = {
@@ -44,6 +44,14 @@ lazy_static::lazy_static! {
         //todo chars and floats
         m
     };
+    static ref PREDEFINED_FUNCTIONS: Vec<(&'static str, Vec<Type>, Type)> = {
+        vec![
+        	("printInt",vec![Type::Int],Type::Unit),
+			("printBool",vec![Type::Bool],Type::Unit),
+			("println",vec![],Type::Unit),
+			("printChar",vec![Type::Char],Type::Unit),
+		]
+    };
 }
 
 pub struct TypeCheckContext<'a> {
@@ -76,6 +84,9 @@ pub fn typecheck(ast: &mut Program) {
         if !functions.insert(f.identifier) {
             panic!("duplicatge definition of {} at {:?}", f.identifier, f.pos);
         }
+		if PREDEFINED_FUNCTIONS.iter().map(|(s,_,_)|*s).any(|s| s.eq(f.identifier)) {
+			panic!("can not redefine predefined function {} at {:?}", f.identifier, f.pos);
+		}
         let id = tcc.next_id;
         tcc.next_id += 1;
         tcc.root.borrow_mut().functions.push((
@@ -158,15 +169,15 @@ impl<'a> TypeCheckContext<'a> {
                                 .iter()
                                 .any(|(vid, _, _)| vid.eq(id))
                             {
-								panic!("already a variable '{id}' in this scope")
-							}
+                                panic!("already a variable '{id}' in this scope")
+                            }
                             //if new initialized variable
                             block.scopeinfo.borrow_mut().variables.push((
                                 id,
                                 t.unwrap(),
                                 self.next_id,
                             ));
-                            *o=Some(self.next_id);
+                            *o = Some(self.next_id);
                             self.next_id += 1;
                             *t.as_ref().unwrap()
                         }
@@ -218,25 +229,30 @@ impl<'a> TypeCheckContext<'a> {
         scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
     ) -> Type {
         match expr {
-            Expression::Binary(l, op, r) => {
+            Expression::Binary(l, op, r, t) => {
                 let k = (
                     self.check_expression(l, scopeinfo.clone()),
                     *op,
                     self.check_expression(r, scopeinfo),
                 );
-                if let Some(t) = BINARY_TABLE.get(&k) {
+                *t = BINARY_TABLE.get(&k).copied();
+                if let Some(t) = t {
                     return *t;
                 }
                 panic!("invalid binary")
             }
-            Expression::Unary(op, e) => {
+            Expression::Unary(op, e, t) => {
                 let k = (*op, self.check_expression(e, scopeinfo));
-                if let Some(t) = UNARY_TABLE.get(&k) {
+                *t = UNARY_TABLE.get(&k).copied();
+                if let Some(t) = t {
                     return *t;
                 }
                 panic!("invalid unary")
             }
-            Expression::Value(v) => self.check_value(v, scopeinfo),
+            Expression::Value(v, t) => {
+                *t = Some(self.check_value(v, scopeinfo));
+                t.unwrap()
+            }
         }
     }
 
@@ -248,6 +264,7 @@ impl<'a> TypeCheckContext<'a> {
         match value {
             Value::Number(_) => Type::Int,
             Value::Bool(_) => Type::Bool,
+			Value::Char(_) => Type::Char,
             Value::Call(id, exprs, o) => {
                 if let Some(f) = find_function(id, scopeinfo.clone()) {
                     if exprs.len() != f.1.len()
@@ -313,5 +330,7 @@ pub fn find_function<'a>(
         }
         si = s.borrow().previous.clone();
     }
-    None
+	PREDEFINED_FUNCTIONS.iter().find(|(s,_,_)|s.eq(&id)).map(|(s,args,rt)|{
+		(*s, args.clone(), *rt, -1)
+	})
 }

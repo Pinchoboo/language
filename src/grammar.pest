@@ -41,7 +41,11 @@ value = _{
   | "(" ~ expression ~ ")"
   | call
   | identifier
+  | char
 }
+
+char = @{"'" ~ ANY ~ "'"}
+
 atom  = _{ unop? ~ value }
 
 expression = {

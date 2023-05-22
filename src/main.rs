@@ -11,7 +11,7 @@ mod compile;
 
 fn main() {
     let fp = parser::FileParser::new("./main.lang").unwrap();
-    let mut ast = fp.parse().expect("no parsing problems");
+    let mut ast = fp.parse().expect("expect no parsing problems");
 	typecheck::typecheck(&mut ast);
     File::create("./out/main.lang.ast")
         .expect("no problems opening/creating file")

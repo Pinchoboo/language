@@ -1,5 +1,14 @@
 fn main() {
-	int a = 1234 + 4321
-	a = 999
-	int b = 5 + a
+	printChar('H')
+	printChar('e')
+	printChar('l')
+	printChar('l')
+	printChar('o')
+	printChar(' ')
+	printChar('w')
+	printChar('o')
+	printChar('r')
+	printChar('l')
+	printChar('d')
+	println()
 }
