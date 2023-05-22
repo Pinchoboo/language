@@ -1,5 +1,6 @@
 use std::{
-    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command, rc::Rc,
+    any::Any, cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command,
+    rc::Rc,
 };
 
 use inkwell::{
@@ -9,8 +10,11 @@ use inkwell::{
     targets::{
         CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
     },
-    types::IntType,
-    values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue},
+    types::{BasicType, IntType},
+    values::{
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, IntValue,
+        PointerValue,
+    },
     AddressSpace, IntPredicate, OptimizationLevel,
 };
 
@@ -57,24 +61,68 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
             ),
             Some(Linkage::External),
         );
-        //main type signature
-        let i64_type = self.context.i64_type();
-        let function_type =
-            i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
-        let main_value = self.module.add_function("main", function_type, None);
-        let basic_block = self.context.append_basic_block(main_value, "entry");
-        self.builder.position_at_end(basic_block);
-
-        //add program
-        let main = program
+        // compile program
+        program
             .functions
             .iter()
-            .find(|f| f.identifier.eq("main"))
-            .expect("main function to exist");
-        self.emit_block(&main.body, &main_value);
+            .map(|f| {
+                let args = f
+                    .arguments
+                    .iter()
+                    .map(|(t, _)| match t {
+                        Type::Int => self.context.i64_type().into(),
+                        Type::Float => self.context.f64_type().into(),
+                        Type::Bool => self.context.bool_type().into(),
+                        Type::Char => self.context.i64_type().into(),
+                        Type::Unit => todo!(),
+                    })
+                    .collect::<Vec<_>>();
 
-        self.builder
-            .build_return(Some(&self.context.i64_type().const_int(0, false)));
+                let function_value = self.module.add_function(
+                    f.identifier,
+                    match f.return_type {
+                        Type::Int => self.context.i64_type().fn_type(&args, false),
+                        Type::Float => self.context.f64_type().fn_type(&args, false),
+                        Type::Bool => self.context.bool_type().fn_type(&args, false),
+                        Type::Char => self.context.i64_type().fn_type(&args, false),
+                        Type::Unit => self.context.void_type().fn_type(&args, false),
+                    },
+                    None,
+                );
+                (f, function_value)
+            })
+            .collect::<Vec<_>>()
+            .iter()
+            .for_each(|(f, function_value)| {
+                self.builder
+                    .position_at_end(self.context.append_basic_block(*function_value, "entry"));
+                for (t, id) in &f.arguments {
+                    let (_, _, i, argnum) =
+                        typecheck::find_variable(id, f.body.scopeinfo.clone()).unwrap();
+                    let varname = format!("{id}_{i}");
+                    self.builder.build_store(
+                        {
+                            let p = self.builder.build_alloca(
+                                match t {
+                                    Type::Int => self.context.i64_type().as_basic_type_enum(),
+                                    Type::Float => self.context.f64_type().as_basic_type_enum(),
+                                    Type::Bool => self.context.i64_type().as_basic_type_enum(),
+                                    Type::Char => self.context.i64_type().as_basic_type_enum(),
+                                    Type::Unit => panic!("unreachable"),
+                                },
+                                &varname,
+                            );
+                            self.vars.insert(i, p);
+                            p
+                        },
+                        function_value.get_params()[argnum.unwrap() as usize],
+                    );
+                }
+                self.emit_block(&f.body, *function_value);
+                if f.return_type == Type::Unit {
+                    self.builder.build_return(None);
+                }
+            });
 
         //save llvm ir
         let _result = self.module.print_to_file("./out/main.ll");
@@ -119,15 +167,19 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
         self.execute()
     }
 
-    fn emit_printf_call(&self, string: &&str, args: &[BasicMetadataValueEnum<'a>]) -> IntType {
-        let mut printfargs = vec![self.emit_global_string(string, ".str").into()];
+    fn emit_printf_call(
+        &self,
+        string: &&str,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> CallSiteValue<'ctx> {
+        let mut printfargs: Vec<BasicMetadataValueEnum<'ctx>> =
+            vec![self.emit_global_string(string, "str").into()];
         printfargs.extend_from_slice(args);
         let f = self.module.get_function("printf").unwrap();
-        self.builder.build_call(f, &printfargs, "");
-        self.context.i32_type()
+        self.builder.build_call(f, &printfargs, "")
     }
 
-    fn emit_global_string(&self, string: &&str, name: &str) -> PointerValue {
+    fn emit_global_string(&self, string: &&str, name: &str) -> PointerValue<'ctx> {
         let string = string.to_owned().to_owned() + "\0";
         if self.strings.borrow().contains_key(&string) {
             return *self.strings.borrow().get(&string).unwrap();
@@ -166,7 +218,7 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
             compiled_fn.call();
         }
     }
-    fn emit_block(&mut self, body: &Block, fv: &FunctionValue) {
+    fn emit_block(&mut self, body: &Block, fv: FunctionValue<'ctx>) {
         for s in &body.statements {
             self.emit_statement(s, fv, body.scopeinfo.clone());
         }
@@ -175,7 +227,7 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
     fn emit_statement(
         &mut self,
         statement: &Statement,
-        fv: &FunctionValue,
+        fv: FunctionValue<'ctx>,
         scopeinfo: Rc<RefCell<ScopeInfo>>,
     ) {
         match &statement.statement {
@@ -183,14 +235,14 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                 let varname = format!("{id}_{i}");
                 let pointer = {
                     if t.is_some() {
-                        let p = self.builder.build_alloca(self.context.i32_type(), &varname);
+                        let p = self.builder.build_alloca(self.context.i64_type(), &varname);
                         self.vars.insert(*i, p);
                         p
                     } else {
                         *self.vars.get(i).unwrap()
                     }
                 };
-                let value = self.emit_expression(expr, scopeinfo);
+                let value = self.emit_expression(expr, scopeinfo, fv);
 
                 self.builder.build_store(pointer, value);
             }
@@ -200,17 +252,17 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                     .zip(0..)
                     .map(|((_, _), i)| {
                         (
-                            self.context.append_basic_block(*fv, &format!("if{i}")),
-                            self.context.append_basic_block(*fv, &format!("if{i}_end")),
+                            self.context.append_basic_block(fv, &format!("if{i}")),
+                            self.context.append_basic_block(fv, &format!("if{i}_end")),
                         )
                     })
                     .collect();
-                let afterelselable = self.context.append_basic_block(*fv, "else_end");
+                let afterelselable = self.context.append_basic_block(fv, "else_end");
                 for ((cond, block), (thenlable, afterthenlable)) in once_with(|| ifpart)
                     .chain(ifelsepart.iter())
                     .zip(condblocks.iter())
                 {
-                    let cond = self.emit_expression(cond, scopeinfo.clone());
+                    let cond = self.emit_expression(cond, scopeinfo.clone(), fv);
                     self.builder.build_conditional_branch(
                         cond.into_int_value(),
                         *thenlable,
@@ -218,7 +270,9 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                     );
                     self.builder.position_at_end(*thenlable);
                     self.emit_block(block, fv);
-                    self.builder.build_unconditional_branch(afterelselable);
+                    if thenlable.get_terminator().is_none() {
+                        self.builder.build_unconditional_branch(afterelselable);
+                    }
                     self.builder.position_at_end(*afterthenlable);
                 }
                 self.builder
@@ -230,26 +284,32 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                 self.builder.position_at_end(afterelselable);
             }
             crate::parser::StatementType::While((cond, block)) => {
-                let condlable = self.context.append_basic_block(*fv, "whilecond");
-                let whilelable = self.context.append_basic_block(*fv, "while");
-                let afterwhilelable = self.context.append_basic_block(*fv, "afterwhile");
+                let condlable = self.context.append_basic_block(fv, "whilecond");
+                let whilelable = self.context.append_basic_block(fv, "while");
+                let afterwhilelable = self.context.append_basic_block(fv, "afterwhile");
                 self.builder.build_unconditional_branch(condlable);
                 self.builder.position_at_end(condlable);
                 self.builder.build_conditional_branch(
-                    self.emit_expression(cond, scopeinfo).into_int_value(),
+                    self.emit_expression(cond, scopeinfo, fv).into_int_value(),
                     whilelable,
                     afterwhilelable,
                 );
                 self.builder.position_at_end(whilelable);
                 self.emit_block(block, fv);
-                self.builder.build_unconditional_branch(condlable);
+                if whilelable.get_terminator().is_none() {
+                    self.builder.build_unconditional_branch(condlable);
+                }
                 self.builder.position_at_end(afterwhilelable)
             }
             crate::parser::StatementType::Call(id, args, Some(i)) => {
                 let args: Vec<_> = args
                     .iter()
                     .map(|expr| {
-                        BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone()))
+                        BasicMetadataValueEnum::from(self.emit_expression(
+                            expr,
+                            scopeinfo.clone(),
+                            fv,
+                        ))
                     })
                     .collect();
                 if *i == -1 {
@@ -271,15 +331,14 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                         }
                     }
                 } else {
-                    let funcname = format!("{id}_{i}");
-                    self.builder.build_call(
-                        self.module.get_function(&funcname).unwrap(),
-                        &args,
-                        "",
-                    );
+                    self.builder
+                        .build_call(self.module.get_function(id).unwrap(), &args, "");
                 }
             }
-            crate::parser::StatementType::Return(_) => todo!(),
+            crate::parser::StatementType::Return(e) => {
+                self.builder
+                    .build_return(Some(&self.emit_expression(e, scopeinfo, fv)));
+            }
             _ => {
                 dbg!(&statement.statement);
                 panic!("unreachable")
@@ -291,11 +350,12 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
         &self,
         expr: &Expression,
         scopeinfo: Rc<RefCell<ScopeInfo>>,
-    ) -> BasicValueEnum {
+        fv: FunctionValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
         match expr {
             Expression::Binary(l, b, r, Some(t)) => {
-                let lv = self.emit_expression(l, scopeinfo.clone());
-                let rv = self.emit_expression(r, scopeinfo.clone());
+                let lv = self.emit_expression(l, scopeinfo.clone(), fv);
+                let rv = self.emit_expression(r, scopeinfo.clone(), fv);
                 match (l.get_type(), b, r.get_type()) {
                     (Type::Int, BinOp::Add, Type::Int) => BasicValueEnum::IntValue(
                         self.builder
@@ -349,23 +409,28 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
             }
 
             Expression::Unary(_, _, Some(t)) => todo!(),
-            Expression::Value(v, Some(t)) => self.emit_value(v, scopeinfo),
+            Expression::Value(v, Some(t)) => self.emit_value(v, scopeinfo, fv),
             _ => {
                 panic!("expected type info")
             }
         }
     }
 
-    fn emit_value(&self, val: &Value, scopeinfo: Rc<RefCell<ScopeInfo>>) -> BasicValueEnum {
+    fn emit_value(
+        &self,
+        val: &Value,
+        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        fv: FunctionValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
         match val {
             Value::Number(n) => BasicValueEnum::IntValue(
                 self.context
-                    .i32_type()
+                    .i64_type()
                     .const_int((*n).try_into().unwrap(), false),
             ),
             Value::Char(c) => BasicValueEnum::IntValue(
                 self.context
-                    .i32_type()
+                    .i64_type()
                     .const_int((*c as u32).try_into().unwrap(), false),
             ),
             Value::Bool(b) => BasicValueEnum::IntValue(
@@ -373,17 +438,37 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                     .bool_type()
                     .const_int(if *b { 1 } else { 0 }, false),
             ),
-            Value::Call(_, _, _) => panic!(),
-            Value::Identifier(id, Some(i)) => {
-                match typecheck::find_variable(id, scopeinfo).unwrap() {
-                    (_, Type::Int, i) => self.builder.build_load(*self.vars.get(&i).unwrap(), ""),
-                    (_, Type::Bool, i) => self.builder.build_load(*self.vars.get(&i).unwrap(), ""),
-                    (_, Type::Char, i) => self.builder.build_load(*self.vars.get(&i).unwrap(), ""),
-                    (_, Type::Float, i) => self.builder.build_load(*self.vars.get(&i).unwrap(), ""),
-                    (_, Type::Unit, _) => {
-                        todo!()
+            Value::Call(id, args, Some(i)) => {
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|expr| {
+                        BasicMetadataValueEnum::from(self.emit_expression(
+                            expr,
+                            scopeinfo.clone(),
+                            fv,
+                        ))
+                    })
+                    .collect();
+                if *i == -1 {
+                    match *id {
+                        "printInt" => self.emit_printf_call(&"%d", &args),
+                        "printBool" => self.emit_printf_call(&{ "%d" }, &args),
+                        "println" => self.emit_printf_call(&{ "\n" }, &args),
+                        "printChar" => self.emit_printf_call(&{ "%c" }, &args),
+                        _ => {
+                            panic!("unknown function: {id}")
+                        }
                     }
+                } else {
+                    self.builder
+                        .build_call(self.module.get_function(id).unwrap(), &args, "")
                 }
+                .try_as_basic_value()
+                .unwrap_left()
+            }
+            Value::Identifier(id, Some(_)) => {
+                let foundvar = typecheck::find_variable(id, scopeinfo).unwrap();
+                self.builder.build_load(*self.vars.get(&foundvar.2).unwrap(), "")
             }
             _ => panic!("unreachable"),
         }

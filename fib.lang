@@ -1,5 +1,5 @@
 fn int main() {
-	int iters = 45
+	int iters = 40
 	p('f') p('i') p('b') 
 	println()
 	int a = 1
@@ -11,10 +11,9 @@ fn int main() {
 		a=a+1
 	}
 	println()
-	p('f') p('a') p('s') p('t')
+	p('F') p('a') p('s') p('t')
 	p(' ')
 	p('f') p('i') p('b') 
-	println()
 	a = 1
 	while a <= iters {
 		printInt(a)

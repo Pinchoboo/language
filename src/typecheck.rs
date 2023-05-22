@@ -62,7 +62,7 @@ pub struct TypeCheckContext<'a> {
 #[derive(Derivative, PartialEq, Eq, Default)]
 #[derivative(Debug)]
 pub struct ScopeInfo<'a> {
-    pub variables: Vec<(Identifier<'a>, Type, i32)>,
+    pub variables: Vec<(Identifier<'a>, Type, i32, Option<i32>)>,
     pub functions: Vec<(Identifier<'a>, Vec<Type>, Type, i32)>,
     #[derivative(Debug = "ignore")]
     pub previous: Option<Rc<RefCell<ScopeInfo<'a>>>>,
@@ -99,12 +99,12 @@ pub fn typecheck(ast: &mut Program) {
 
     //check blocks
     ast.functions.iter_mut().for_each(|f| {
-        for arg in &f.arguments {
+        for (i, arg) in f.arguments.iter().enumerate() {
             f.body
                 .scopeinfo
                 .borrow_mut()
                 .variables
-                .push((arg.1, arg.0, tcc.next_id));
+                .push((arg.1, arg.0, tcc.next_id, Some(i as i32)));
             tcc.next_id += 1;
         }
         if !tcc.check_block(&mut f.body, Some(f.return_type), tcc.root.clone()) {
@@ -167,7 +167,7 @@ impl<'a> TypeCheckContext<'a> {
                                 .borrow()
                                 .variables
                                 .iter()
-                                .any(|(vid, _, _)| vid.eq(id))
+                                .any(|(vid, _, _, _)| vid.eq(id))
                             {
                                 panic!("already a variable '{id}' in this scope")
                             }
@@ -176,6 +176,7 @@ impl<'a> TypeCheckContext<'a> {
                                 id,
                                 t.unwrap(),
                                 self.next_id,
+								None
                             ));
                             *o = Some(self.next_id);
                             self.next_id += 1;
@@ -303,10 +304,10 @@ impl<'a> TypeCheckContext<'a> {
 pub fn find_variable<'a>(
     id: Identifier<'_>,
     si: Rc<RefCell<ScopeInfo<'a>>>,
-) -> Option<(&'a str, Type, i32)> {
+) -> Option<(&'a str, Type, i32, Option<i32>)> {
     let mut si = Some(si);
     while let Some(s) = si.clone() {
-        if let Some(v) = s.borrow().variables.iter().find(|(vid, _, _)| vid.eq(&id)) {
+        if let Some(v) = s.borrow().variables.iter().find(|(vid, _, _, _)| vid.eq(&id)) {
             return Some(*v);
         }
         si = s.borrow().previous.clone();
