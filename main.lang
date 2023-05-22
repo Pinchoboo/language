@@ -1,24 +1,24 @@
 fn int main() {
 	int iters = 45
-	p('f') p('i') p('b') 
+	printChar('f') printChar('i') printChar('b') 
 	println()
 	int a = 1
 	while a <= iters {
 		printInt(a)
-		p(':')
+		printChar(':')
 		printInt(fib(a))
 		println()
 		a=a+1
 	}
 	println()
-	p('f') p('a') p('s') p('t')
-	p(' ')
-	p('f') p('i') p('b') 
+	printChar('f') printChar('a') printChar('s') printChar('t')
+	printChar(' ')
+	printChar('f') printChar('i') printChar('b') 
 	println()
 	a = 1
 	while a <= iters {
 		printInt(a)
-		p(':')
+		printChar(':')
 		printInt(fastfib(a))
 		println()
 		a=a+1
@@ -39,12 +39,10 @@ fn int fastfib(int n){
 	int b = 1
 	while n > 0 {
 		a = a + b
-		int c = b
+		int c = b /*todo fix allocates new memory every iter*/
 		b = a
 		a = c
 		n = n - 1
 	}
 	return b
 }
-
-fn p(char c){printChar(c)}

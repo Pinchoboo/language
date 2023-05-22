@@ -13,12 +13,14 @@ boolean = { true | false }
 true    = { "true" }
 false   = { "false" }
 
-type      = { intType | floatType | boolType | charType | unitType }
+type      = { intType | floatType | boolType | charType | unitType | mapType | structmapType }
 intType   = { "int" }
 floatType = { "float" }
 boolType  = { "bool" }
 charType  = { "char" }
-unitType  = { "()" }
+unitType  = { "void" }
+mapType = { "<" ~ type ~ "," ~ type ~ ">" }
+structmapType  = {"<" ~ identifier ~ ">"}
 
 reserved        =  { type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword }
 functionKeyword = _{ "fn" }
