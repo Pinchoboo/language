@@ -1,1 +1,1 @@
-fact term
+opt-14 ./out/main.ll -S -O1
