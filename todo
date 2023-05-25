@@ -1,1 +1,7 @@
 opt-14 ./out/main.ll -S -O1
+<void, T> = Option<&T>
+<A, B> map; 
+let maybe = map.get(a) -> <void, b>
+if maybe.contains(void) {
+    b = maybe.(void)
+}
