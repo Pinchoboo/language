@@ -6,7 +6,10 @@ use std::{
 
 use derivative::Derivative;
 
-use crate::parser::{BinOp, Block, Expression, Function, Identifier, Program, Type, UnOp, Value};
+use crate::{
+    functions::PREDEFINED_FUNCTIONS,
+    parser::{BinOp, Block, Expression, Identifier, Program, Type, UnOp, Value},
+};
 
 lazy_static::lazy_static! {
     static ref UNARY_TABLE: HashMap<(UnOp, Type), Type> = {
@@ -44,14 +47,6 @@ lazy_static::lazy_static! {
         //todo chars and floats
         m
     };
-    static ref PREDEFINED_FUNCTIONS: Vec<(&'static str, Vec<Type>, Type)> = {
-        vec![
-        	("printInt",vec![Type::Int],Type::Unit),
-			("printBool",vec![Type::Bool],Type::Unit),
-			("println",vec![],Type::Unit),
-			("printChar",vec![Type::Char],Type::Unit),
-		]
-    };
 }
 
 pub struct TypeCheckContext<'a> {
@@ -84,15 +79,22 @@ pub fn typecheck(ast: &mut Program) {
         if !functions.insert(f.identifier) {
             panic!("duplicatge definition of {} at {:?}", f.identifier, f.pos);
         }
-		if PREDEFINED_FUNCTIONS.iter().map(|(s,_,_)|*s).any(|s| s.eq(f.identifier)) {
-			panic!("can not redefine predefined function {} at {:?}", f.identifier, f.pos);
-		}
+        if PREDEFINED_FUNCTIONS
+            .iter()
+            .map(|(s, _, _)| *s)
+            .any(|s| s.eq(f.identifier))
+        {
+            panic!(
+                "can not redefine predefined function {} at {:?}",
+                f.identifier, f.pos
+            );
+        }
         let id = tcc.next_id;
         tcc.next_id += 1;
         tcc.root.borrow_mut().functions.push((
             f.identifier,
-            f.arguments.iter().map(|a| a.0).collect(),
-            f.return_type,
+            f.arguments.iter().map(|a| a.0.clone()).collect(),
+            f.return_type.clone(),
             id,
         ));
     });
@@ -100,14 +102,15 @@ pub fn typecheck(ast: &mut Program) {
     //check blocks
     ast.functions.iter_mut().for_each(|f| {
         for (i, arg) in f.arguments.iter().enumerate() {
-            f.body
-                .scopeinfo
-                .borrow_mut()
-                .variables
-                .push((arg.1, arg.0, tcc.next_id, Some(i as i32)));
+            f.body.scopeinfo.borrow_mut().variables.push((
+                arg.1,
+                arg.0.clone(),
+                tcc.next_id,
+                Some(i as i32),
+            ));
             tcc.next_id += 1;
         }
-        if !tcc.check_block(&mut f.body, Some(f.return_type), tcc.root.clone()) {
+        if !tcc.check_block(&mut f.body, &Some(f.return_type.clone()), tcc.root.clone()) {
             panic!("function {} at {:?} did not return", f.identifier, f.pos);
         }
     });
@@ -117,7 +120,7 @@ impl<'a> TypeCheckContext<'a> {
     fn check_block(
         &mut self,
         block: &mut Block<'a>,
-        returntype: Option<Type>,
+        returntype: &Option<Type>,
         previous_scope: Rc<RefCell<ScopeInfo<'a>>>,
     ) -> bool {
         block.scopeinfo.borrow_mut().previous = Some(previous_scope);
@@ -174,13 +177,13 @@ impl<'a> TypeCheckContext<'a> {
                             //if new initialized variable
                             block.scopeinfo.borrow_mut().variables.push((
                                 id,
-                                t.unwrap(),
+                                t.as_ref().unwrap().clone(),
                                 self.next_id,
-								None
+                                None,
                             ));
                             *o = Some(self.next_id);
                             self.next_id += 1;
-                            *t.as_ref().unwrap()
+                            t.as_ref().unwrap().clone()
                         }
                     {
                         panic!("type of expression {expr:?} does not match type of variable {id}")
@@ -209,7 +212,7 @@ impl<'a> TypeCheckContext<'a> {
                 }
                 crate::parser::StatementType::Return(expr) => {
                     if let Some(rt) = returntype {
-                        if self.check_expression(expr, block.scopeinfo.clone()) != rt {
+                        if self.check_expression(expr, block.scopeinfo.clone()) != *rt {
                             panic!("does not return correct type")
                         }
                         hasreturned = true;
@@ -217,11 +220,30 @@ impl<'a> TypeCheckContext<'a> {
                         panic!("can not return from here")
                     }
                 }
+                crate::parser::StatementType::Creation(t, id, o) => {
+                    if block
+                        .scopeinfo
+                        .borrow()
+                        .variables
+                        .iter()
+                        .any(|(vid, _, _, _)| vid.eq(id))
+                    {
+                        panic!("already a variable or map '{id}' in this scope")
+                    }
+					block.scopeinfo.borrow_mut().variables.push((
+						id,
+						t.clone(),
+						self.next_id,
+						None,
+					));
+					*o = Some(self.next_id);
+					self.next_id += 1;
+                }
             }
         });
         hasreturned
             | returntype.is_none()
-            | (returntype.is_some() && returntype.unwrap() == Type::Unit)
+            | (returntype.is_some() && *returntype.as_ref().unwrap() == Type::Unit)
     }
 
     fn check_expression(
@@ -236,23 +258,23 @@ impl<'a> TypeCheckContext<'a> {
                     *op,
                     self.check_expression(r, scopeinfo),
                 );
-                *t = BINARY_TABLE.get(&k).copied();
+                *t = BINARY_TABLE.get(&k).cloned();
                 if let Some(t) = t {
-                    return *t;
+                    return t.clone();
                 }
                 panic!("invalid binary")
             }
             Expression::Unary(op, e, t) => {
                 let k = (*op, self.check_expression(e, scopeinfo));
-                *t = UNARY_TABLE.get(&k).copied();
+                *t = UNARY_TABLE.get(&k).cloned();
                 if let Some(t) = t {
-                    return *t;
+                    return t.clone();
                 }
                 panic!("invalid unary")
             }
             Expression::Value(v, t) => {
                 *t = Some(self.check_value(v, scopeinfo));
-                t.unwrap()
+                t.as_ref().unwrap().clone()
             }
         }
     }
@@ -265,7 +287,7 @@ impl<'a> TypeCheckContext<'a> {
         match value {
             Value::Number(_) => Type::Int,
             Value::Bool(_) => Type::Bool,
-			Value::Char(_) => Type::Char,
+            Value::Char(_) => Type::Char,
             Value::Call(id, exprs, o) => {
                 if let Some(f) = find_function(id, scopeinfo.clone()) {
                     if exprs.len() != f.1.len()
@@ -307,8 +329,13 @@ pub fn find_variable<'a>(
 ) -> Option<(&'a str, Type, i32, Option<i32>)> {
     let mut si = Some(si);
     while let Some(s) = si.clone() {
-        if let Some(v) = s.borrow().variables.iter().find(|(vid, _, _, _)| vid.eq(&id)) {
-            return Some(*v);
+        if let Some(v) = s
+            .borrow()
+            .variables
+            .iter()
+            .find(|(vid, _, _, _)| vid.eq(&id))
+        {
+            return Some(v.clone());
         }
         si = s.borrow().previous.clone();
     }
@@ -331,7 +358,8 @@ pub fn find_function<'a>(
         }
         si = s.borrow().previous.clone();
     }
-	PREDEFINED_FUNCTIONS.iter().find(|(s,_,_)|s.eq(&id)).map(|(s,args,rt)|{
-		(*s, args.clone(), *rt, -1)
-	})
+    PREDEFINED_FUNCTIONS
+        .iter()
+        .find(|(s, _, _)| s.eq(&id))
+        .map(|(s, args, rt)| (*s, args.clone(), rt.clone(), -1))
 }

@@ -1,34 +1,30 @@
 use std::{
-    any::Any, cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command,
-    rc::Rc,
+    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command, rc::Rc,
 };
 
 use inkwell::{
     builder::Builder,
     context::Context,
     module::{Linkage, Module},
-    targets::{
-        CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
-    },
-    types::{BasicType, IntType},
-    values::{
-        BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, IntValue,
-        PointerValue,
-    },
-    AddressSpace, IntPredicate, OptimizationLevel,
+    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
+    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
+    values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue},
+    AddressSpace, OptimizationLevel,
 };
 
 use crate::{
-    parser::{BinOp, Block, Expression, Function, Program, Statement, Type, Value},
-    typecheck::{self, find_function, ScopeInfo},
+    functions,
+    parser::{BinOp, Block, Expression, Program, Statement, Type, Value},
+    typecheck::{self, ScopeInfo},
 };
-
+const PRINTF: &str = "printf";
 pub struct Compiler<'ctx, 'a> {
     pub context: &'ctx Context,
     pub builder: &'a Builder<'ctx>,
     pub module: &'a Module<'ctx>,
     pub vars: HashMap<i32, PointerValue<'ctx>>,
     strings: Rc<RefCell<HashMap<String, PointerValue<'ctx>>>>,
+    structs: HashMap<Type, StructType<'ctx>>,
 }
 
 pub fn compile(program: Program) {
@@ -42,58 +38,81 @@ pub fn compile(program: Program) {
         builder: &builder,
         vars: HashMap::new(),
         strings: Rc::new(RefCell::new(HashMap::new())),
+        structs: HashMap::new(),
     };
     c.compile(program);
 }
 
-impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
-    pub fn compile(&mut self, program: Program<'b>) {
+impl<'ctx, 'a> Compiler<'ctx, 'a> {
+    fn llvmtype(&self, t: &Type) -> BasicTypeEnum<'ctx> {
+        match t {
+            Type::Int => self.context.i64_type().as_basic_type_enum(),
+            Type::Float => self.context.f64_type().as_basic_type_enum(),
+            Type::Bool => self.context.bool_type().as_basic_type_enum(),
+            Type::Char => self.context.i64_type().as_basic_type_enum(),
+            Type::Unit => todo!(),
+            Type::Map(_, _) => todo!(),
+        }
+    }
+    fn llvmfunctiontype(
+        &self,
+        t: &Type,
+        param_types: &[BasicMetadataTypeEnum<'ctx>],
+        is_var_args: bool,
+    ) -> FunctionType<'ctx> {
+        match t {
+            Type::Int => self.context.i64_type().fn_type(param_types, is_var_args),
+            Type::Float => self.context.f64_type().fn_type(param_types, is_var_args),
+            Type::Bool => self.context.bool_type().fn_type(param_types, is_var_args),
+            Type::Char => self.context.i64_type().fn_type(param_types, is_var_args),
+            Type::Unit => self.context.void_type().fn_type(param_types, is_var_args),
+            Type::Map(_, _) => todo!(),
+        }
+    }
+
+    pub fn compile(&mut self, program: Program) {
         //add external functions
-        self.module.add_function(
-            "printf",
-            self.context.i32_type().fn_type(
-                &[self
-                    .context
-                    .i8_type()
-                    .ptr_type(AddressSpace::default())
-                    .into()],
-                true,
-            ),
-            Some(Linkage::External),
-        );
+        {
+            self.module.add_function(
+                PRINTF,
+                self.context.i32_type().fn_type(
+                    &[self
+                        .context
+                        .i8_type()
+                        .ptr_type(AddressSpace::default())
+                        .into()],
+                    true,
+                ),
+                Some(Linkage::External),
+            );
+        }
         // compile program
         program
             .functions
             .iter()
             .map(|f| {
-                let args = f
-                    .arguments
-                    .iter()
-                    .map(|(t, _)| match t {
-                        Type::Int => self.context.i64_type().into(),
-                        Type::Float => self.context.f64_type().into(),
-                        Type::Bool => self.context.bool_type().into(),
-                        Type::Char => self.context.i64_type().into(),
-                        Type::Unit => todo!(),
-                    })
-                    .collect::<Vec<_>>();
-
-                let function_value = self.module.add_function(
-                    f.identifier,
-                    match f.return_type {
-                        Type::Int => self.context.i64_type().fn_type(&args, false),
-                        Type::Float => self.context.f64_type().fn_type(&args, false),
-                        Type::Bool => self.context.bool_type().fn_type(&args, false),
-                        Type::Char => self.context.i64_type().fn_type(&args, false),
-                        Type::Unit => self.context.void_type().fn_type(&args, false),
-                    },
-                    None,
-                );
-                (f, function_value)
+                //add functions to context
+                (
+                    f,
+                    self.module.add_function(
+                        f.identifier,
+                        self.llvmfunctiontype(
+                            &f.return_type,
+                            f.arguments
+                                .iter()
+                                .map(|t| self.llvmtype(&t.0).into())
+                                .collect::<Vec<_>>()
+                                .as_slice(),
+                            false,
+                        ),
+                        None,
+                    ),
+                )
             })
             .collect::<Vec<_>>()
             .iter()
             .for_each(|(f, function_value)| {
+                //compile functions
                 self.builder
                     .position_at_end(self.context.append_basic_block(*function_value, "entry"));
                 for (t, id) in &f.arguments {
@@ -102,16 +121,7 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                     let varname = format!("{id}_{i}");
                     self.builder.build_store(
                         {
-                            let p = self.builder.build_alloca(
-                                match t {
-                                    Type::Int => self.context.i64_type().as_basic_type_enum(),
-                                    Type::Float => self.context.f64_type().as_basic_type_enum(),
-                                    Type::Bool => self.context.i64_type().as_basic_type_enum(),
-                                    Type::Char => self.context.i64_type().as_basic_type_enum(),
-                                    Type::Unit => panic!("unreachable"),
-                                },
-                                &varname,
-                            );
+                            let p = self.builder.build_alloca(self.llvmtype(t), &varname);
                             self.vars.insert(i, p);
                             p
                         },
@@ -124,44 +134,47 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                 }
             });
 
-        //save llvm ir
-        let _result = self.module.print_to_file("./out/main.ll");
+        //export
+        {
+            //save llvm ir
+            let _result = self.module.print_to_file("./out/main.ll");
 
-        //check module
-        if let Err(e) = self.module.verify() {
-            println!("{}", e.to_string());
-            return;
+            //check module
+            if let Err(e) = self.module.verify() {
+                println!("{}", e.to_string());
+                return;
+            }
+
+            //save executable
+            Target::initialize_x86(&InitializationConfig::default());
+
+            let opt = OptimizationLevel::Aggressive;
+            let reloc = RelocMode::Default;
+            let model = CodeModel::Default;
+            let target = Target::from_name("x86-64").unwrap();
+            let target_machine = target
+                .create_target_machine(
+                    &TargetTriple::create("x86_64-pc-linux-gnu"),
+                    "x86-64",
+                    "+avx2",
+                    opt,
+                    reloc,
+                    model,
+                )
+                .unwrap();
+
+            let _result = target_machine.write_to_file(
+                self.module,
+                FileType::Assembly,
+                Path::new("./out/main.asm"),
+            );
+            let _result = Command::new("clang")
+                .arg("-no-pie")
+                .arg("./out/main.asm")
+                .arg("-o")
+                .arg("./out/main")
+                .output();
         }
-
-        //save executable
-        Target::initialize_x86(&InitializationConfig::default());
-
-        let opt = OptimizationLevel::Aggressive;
-        let reloc = RelocMode::Default;
-        let model = CodeModel::Default;
-        let target = Target::from_name("x86-64").unwrap();
-        let target_machine = target
-            .create_target_machine(
-                &TargetTriple::create("x86_64-pc-linux-gnu"),
-                "x86-64",
-                "+avx2",
-                opt,
-                reloc,
-                model,
-            )
-            .unwrap();
-
-        let _result = target_machine.write_to_file(
-            self.module,
-            FileType::Assembly,
-            Path::new("./out/main.asm"),
-        );
-        let _result = Command::new("clang")
-            .arg("-no-pie")
-            .arg("./out/main.asm")
-            .arg("-o")
-            .arg("./out/main")
-            .output();
 
         //exec
         self.execute()
@@ -175,7 +188,7 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
         let mut printfargs: Vec<BasicMetadataValueEnum<'ctx>> =
             vec![self.emit_global_string(string, "str").into()];
         printfargs.extend_from_slice(args);
-        let f = self.module.get_function("printf").unwrap();
+        let f = self.module.get_function(PRINTF).unwrap();
         self.builder.build_call(f, &printfargs, "")
     }
 
@@ -218,6 +231,7 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
             compiled_fn.call();
         }
     }
+
     fn emit_block(&mut self, body: &Block, fv: FunctionValue<'ctx>) {
         for s in &body.statements {
             self.emit_statement(s, fv, body.scopeinfo.clone());
@@ -245,6 +259,25 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                 let value = self.emit_expression(expr, scopeinfo, fv);
 
                 self.builder.build_store(pointer, value);
+            }
+            crate::parser::StatementType::Creation(maptype, id, Some(i)) => {
+                let struct_name = format!("{maptype}");
+                let varname = format!("{id}_{i}");
+                let var = self.builder.build_malloc(
+                        *self.structs.entry(maptype.clone()).or_insert({
+                            let st = self.context.opaque_struct_type(&struct_name);
+                            st.set_body(&[
+                                    self.context.i64_type().into(),
+									self.context.i64_type().into(),
+                                    self.context.i8_type().ptr_type(AddressSpace::default()).into(),
+                                ],
+                                false,
+                            );
+                            st
+                        }),
+                        &varname,
+                    ).unwrap();
+				self.builder.build_free(var);
             }
             crate::parser::StatementType::If(ifpart, ifelsepart, elseblock) => {
                 let condblocks: Vec<_> = once_with(|| ifpart)
@@ -314,16 +347,16 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                     .collect();
                 if *i == -1 {
                     match *id {
-                        "printInt" => {
+                        functions::PRINT_INT => {
                             self.emit_printf_call(&"%d", &args);
                         }
-                        "printBool" => {
+                        functions::PRINT_BOOL => {
                             self.emit_printf_call(&{ "%d" }, &args);
                         }
-                        "println" => {
+                        functions::PRINTLN => {
                             self.emit_printf_call(&{ "\n" }, &args);
                         }
-                        "printChar" => {
+                        functions::PRINT_CHAR => {
                             self.emit_printf_call(&{ "%c" }, &args);
                         }
                         _ => {
@@ -340,7 +373,6 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                     .build_return(Some(&self.emit_expression(e, scopeinfo, fv)));
             }
             _ => {
-                dbg!(&statement.statement);
                 panic!("unreachable")
             }
         };
@@ -353,7 +385,7 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
         fv: FunctionValue<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         match expr {
-            Expression::Binary(l, b, r, Some(t)) => {
+            Expression::Binary(l, b, r, Some(_)) => {
                 let lv = self.emit_expression(l, scopeinfo.clone(), fv);
                 let rv = self.emit_expression(r, scopeinfo.clone(), fv);
                 match (l.get_type(), b, r.get_type()) {
@@ -408,8 +440,8 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
                 }
             }
 
-            Expression::Unary(_, _, Some(t)) => todo!(),
-            Expression::Value(v, Some(t)) => self.emit_value(v, scopeinfo, fv),
+            Expression::Unary(_, _, Some(_)) => todo!(),
+            Expression::Value(v, Some(_)) => self.emit_value(v, scopeinfo, fv),
             _ => {
                 panic!("expected type info")
             }
@@ -468,7 +500,8 @@ impl<'ctx, 'a, 'b: 'ctx> Compiler<'ctx, 'a> {
             }
             Value::Identifier(id, Some(_)) => {
                 let foundvar = typecheck::find_variable(id, scopeinfo).unwrap();
-                self.builder.build_load(*self.vars.get(&foundvar.2).unwrap(), "")
+                self.builder
+                    .build_load(*self.vars.get(&foundvar.2).unwrap(), "")
             }
             _ => panic!("unreachable"),
         }

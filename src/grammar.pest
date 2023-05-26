@@ -13,7 +13,8 @@ boolean = { true | false }
 true    = { "true" }
 false   = { "false" }
 
-type      = { intType | floatType | boolType | charType | unitType | mapType | structmapType }
+type      = { intType | floatType | boolType | charType | unitType | mapType /*| structmapType*/ }
+
 intType   = { "int" }
 floatType = { "float" }
 boolType  = { "bool" }
@@ -22,12 +23,13 @@ unitType  = { "void" }
 mapType = { "<" ~ type ~ "," ~ type ~ ">" }
 structmapType  = {"<" ~ identifier ~ ">"}
 
-reserved        =  { type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword }
+reserved        =  { type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword }
 functionKeyword = _{ "fn" }
 whileKeyword    = _{ "while" }
 ifKeyword       = _{ "if" }
 elseKeyword     = _{ "else" }
 returnKeyword   = _{ "return" }
+createKeyword   = _{ "create" }
 
 identifier = @{
     !reserved ~ (alpha ~ (alpha | digit)*)
@@ -40,11 +42,14 @@ call = {
 value = _{
     number
   | boolean
+  | mapCall
   | "(" ~ expression ~ ")"
   | call
   | identifier
   | char
 }
+
+mapCall = {identifier ~ "." ~ call}
 
 char = @{"'" ~ ANY ~ "'"}
 
@@ -96,6 +101,10 @@ assignment = {
     type? ~ identifier ~ "=" ~ expression
 }
 
+creation = {
+	createKeyword ~ mapType ~ identifier
+}
+
 scope    = _{ "{" ~ block ~ "}" }
 if       =  { ifKeyword ~ expression ~ scope ~ (elseKeyword ~ ifKeyword ~ expression ~ scope)* ~ (elseKeyword ~ scope)? }
 while    =  { whileKeyword ~ expression ~ scope }
@@ -105,7 +114,7 @@ return = { (returnKeyword ~ expression) }
 
 /// no nested functions and nested scopes for now
 block = {
-    (if | while | assignment | call)* ~ return?
+    (if | while | assignment | creation | mapCall | call)* ~ return?
 }
 
 program = {

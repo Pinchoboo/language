@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    fmt::Debug,
+    fmt::{Debug, Display},
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -49,25 +49,55 @@ pub struct Program<'a> {
     pub functions: Vec<Function<'a>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Type {
     Int,
     Float,
     Bool,
     Char,
     Unit,
+    Map(Box<Type>, Box<Type>),
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Int => f.write_str("int"),
+            Type::Float => f.write_str("float"),
+            Type::Bool => f.write_str("bool"),
+            Type::Char => f.write_str("char"),
+            Type::Unit => f.write_str("void"),
+            Type::Map(k, v) => {
+                {
+                    f.write_str("map_")?;
+                    std::fmt::Display::fmt(&k, f)?;
+                    f.write_str("_to_")?;
+                    std::fmt::Display::fmt(&v, f)?
+                };
+                Ok(())
+            }
+        }
+    }
 }
 
 impl<'i> TryFrom<Pair<'i, Rule>> for Type {
     type Error = ();
     fn try_from(value: Pair<Rule>) -> Result<Self, Self::Error> {
         if value.as_rule() == Rule::r#type {
-            match value.into_inner().next().ok_or(())?.as_rule() {
+            let inner = value.into_inner().next().ok_or(())?;
+            match inner.as_rule() {
                 Rule::intType => Ok(Type::Int),
                 Rule::floatType => Ok(Type::Float),
                 Rule::boolType => Ok(Type::Bool),
                 Rule::charType => Ok(Type::Char),
                 Rule::unitType => Ok(Type::Unit),
+                Rule::mapType => {
+                    let mut inner = inner.into_inner();
+                    Ok(Type::Map(
+                        Box::new(Type::try_from(inner.next().expect("key type to exist"))?),
+                        Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
+                    ))
+                }
                 _ => Err(()),
             }
         } else {
@@ -112,6 +142,7 @@ pub enum StatementType<'a> {
     Assignment(Option<Type>, Identifier<'a>, Expression<'a>, Option<i32>),
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Return(Expression<'a>),
+    Creation(Type, Identifier<'a>, Option<i32>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -132,7 +163,9 @@ impl<'a> Expression<'a> {
             Expression::Binary(_, _, _, t) => t,
             Expression::Unary(_, _, t) => t,
             Expression::Value(_, t) => t,
-        }.unwrap()
+        }
+        .clone()
+        .unwrap()
     }
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -141,7 +174,7 @@ pub enum Value<'a> {
     Bool(bool),
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Identifier(Identifier<'a>, Option<i32>),
-	Char(char)
+    Char(char),
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BinOp {
@@ -435,6 +468,40 @@ impl<'a> FileParser {
                                 ),
                             ),
                         },
+                        Rule::creation => Statement {
+                            pos: Possition {
+                                filename: &self.path,
+                                span,
+                            },
+                            statement: {
+                                let mut inner = sp.into_inner();
+                                StatementType::Creation(
+                                    {
+                                        let mut inner =
+                                            inner.next().expect("type to exist").into_inner();
+                                        Type::Map(
+                                            Box::new(
+                                                Type::try_from(
+                                                    inner.next().expect("key type to exist"),
+                                                )
+                                                .expect("valid type"),
+                                            ),
+                                            Box::new(
+                                                Type::try_from(
+                                                    inner.next().expect("value type to exist"),
+                                                )
+                                                .expect("valid type"),
+                                            ),
+                                        )
+                                    },
+                                    inner
+                                        .next()
+                                        .expect("creation should have an identifier")
+                                        .as_str(),
+                                    None,
+                                )
+                            },
+                        },
                         _ => {
                             panic!("unreachable")
                         }
@@ -490,9 +557,7 @@ impl<'a> FileParser {
                     None,
                 )
             }
-			Rule::char => {
-				Value::Char(pair.as_str().chars().nth(1).unwrap())
-			}
+            Rule::char => Value::Char(pair.as_str().chars().nth(1).unwrap()),
             _ => panic!("unreachable"),
         }
     }

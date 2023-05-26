@@ -1,23 +1,24 @@
 fn int main() {
-	int iters = 40
-	p('f') p('i') p('b') 
+	int iters = 45
+	printChar('f') printChar('i') printChar('b') 
 	println()
 	int a = 1
 	while a <= iters {
 		printInt(a)
-		p(':')
+		printChar(':')
 		printInt(fib(a))
 		println()
 		a=a+1
 	}
 	println()
-	p('F') p('a') p('s') p('t')
-	p(' ')
-	p('f') p('i') p('b') 
+	printChar('f') printChar('a') printChar('s') printChar('t')
+	printChar(' ')
+	printChar('f') printChar('i') printChar('b') 
+	println()
 	a = 1
 	while a <= iters {
 		printInt(a)
-		p(':')
+		printChar(':')
 		printInt(fastfib(a))
 		println()
 		a=a+1
@@ -45,5 +46,3 @@ fn int fastfib(int n){
 	}
 	return b
 }
-
-fn p(char c){printChar(c)}
