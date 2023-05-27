@@ -239,6 +239,13 @@ impl<'a> TypeCheckContext<'a> {
 					*o = Some(self.next_id);
 					self.next_id += 1;
                 }
+                crate::parser::StatementType::Free(id, o) => {
+					if let Some((_, Type::Map(_, _), n, _)) = find_variable(id, block.scopeinfo.clone()) {
+						*o = Some(n);
+					}else{
+						panic!("could not find map {id}")
+					}
+				},
             }
         });
         hasreturned

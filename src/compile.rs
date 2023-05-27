@@ -24,7 +24,8 @@ pub struct Compiler<'ctx, 'a> {
     pub module: &'a Module<'ctx>,
     pub vars: HashMap<i32, PointerValue<'ctx>>,
     strings: Rc<RefCell<HashMap<String, PointerValue<'ctx>>>>,
-    structs: HashMap<Type, StructType<'ctx>>,
+    mapstructs: HashMap<Type, StructType<'ctx>>,
+    entrystructs: HashMap<Type, StructType<'ctx>>,
 }
 
 pub fn compile(program: Program) {
@@ -38,20 +39,56 @@ pub fn compile(program: Program) {
         builder: &builder,
         vars: HashMap::new(),
         strings: Rc::new(RefCell::new(HashMap::new())),
-        structs: HashMap::new(),
+        mapstructs: HashMap::new(),
+        entrystructs: HashMap::new(),
     };
     c.compile(program);
 }
 
 impl<'ctx, 'a> Compiler<'ctx, 'a> {
-    fn llvmtype(&self, t: &Type) -> BasicTypeEnum<'ctx> {
+    fn entrystruct(&mut self, t: &Type) -> &StructType<'ctx> {
+        assert!(matches!(t, Type::Map { .. }));
+        if let Type::Map(k, v) = t {
+            let struct_name = format!("entry_{k}_{v}");
+            let key = self.llvmtype(k);
+            let val = self.llvmtype(v);
+            self.entrystructs.entry(t.clone()).or_insert({
+                let st = self.context.opaque_struct_type(&struct_name);
+                st.set_body(&[key, val, st.ptr_type(AddressSpace::default()).into()], true);
+                st
+            })
+        } else {
+            panic!("unreachable")
+        }
+    }
+
+    fn mapstruct(&mut self, t: &Type) -> &StructType<'ctx> {
+        assert!(matches!(t, Type::Map { .. }));
+        let struct_name = format!("{t}");
+        let buckets = self.entrystruct(t).ptr_type(AddressSpace::default());
+
+        self.mapstructs.entry(t.clone()).or_insert({
+            let st = self.context.opaque_struct_type(&struct_name);
+            st.set_body(
+                &[
+                    self.context.i64_type().into(),
+                    self.context.i64_type().into(),
+                    buckets.into(),
+                ],
+                false,
+            );
+            st
+        })
+    }
+
+    fn llvmtype(&mut self, t: &Type) -> BasicTypeEnum<'ctx> {
         match t {
             Type::Int => self.context.i64_type().as_basic_type_enum(),
             Type::Float => self.context.f64_type().as_basic_type_enum(),
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Char => self.context.i64_type().as_basic_type_enum(),
-            Type::Unit => todo!(),
-            Type::Map(_, _) => todo!(),
+            Type::Unit => self.context.custom_width_int_type(0).as_basic_type_enum(),
+            Type::Map(_, _) => self.mapstruct(t).as_basic_type_enum(),
         }
     }
     fn llvmfunctiontype(
@@ -92,22 +129,18 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
             .iter()
             .map(|f| {
                 //add functions to context
-                (
-                    f,
+                (f, {
+                    let params = f
+                        .arguments
+                        .iter()
+                        .map(|t| self.llvmtype(&t.0).into())
+                        .collect::<Vec<_>>();
                     self.module.add_function(
                         f.identifier,
-                        self.llvmfunctiontype(
-                            &f.return_type,
-                            f.arguments
-                                .iter()
-                                .map(|t| self.llvmtype(&t.0).into())
-                                .collect::<Vec<_>>()
-                                .as_slice(),
-                            false,
-                        ),
+                        self.llvmfunctiontype(&f.return_type, params.as_slice(), false),
                         None,
-                    ),
-                )
+                    )
+                })
             })
             .collect::<Vec<_>>()
             .iter()
@@ -261,23 +294,48 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                 self.builder.build_store(pointer, value);
             }
             crate::parser::StatementType::Creation(maptype, id, Some(i)) => {
-                let struct_name = format!("{maptype}");
                 let varname = format!("{id}_{i}");
-                let var = self.builder.build_malloc(
-                        *self.structs.entry(maptype.clone()).or_insert({
-                            let st = self.context.opaque_struct_type(&struct_name);
-                            st.set_body(&[
-                                    self.context.i64_type().into(),
-									self.context.i64_type().into(),
-                                    self.context.i8_type().ptr_type(AddressSpace::default()).into(),
-                                ],
-                                false,
-                            );
-                            st
-                        }),
-                        &varname,
-                    ).unwrap();
-				self.builder.build_free(var);
+                let map = self
+                    .builder
+                    .build_malloc(*self.mapstruct(maptype), &varname)
+                    .unwrap();
+                self.vars.insert(*i, map);
+
+                let capacity = self
+                    .builder
+                    .build_struct_gep(map, 0, &(varname.clone() + ".capacity"))
+                    .unwrap();
+                self.builder
+                    .build_store(capacity, self.context.i64_type().const_int(16, false));
+                let size = self
+                    .builder
+                    .build_struct_gep(map, 1, &(varname.clone() + ".size"))
+                    .unwrap();
+                self.builder
+                    .build_store(size, self.context.i64_type().const_int(0, false));
+                let buckets = self
+                    .builder
+                    .build_struct_gep(map, 2, &(varname + ".buckets"))
+                    .unwrap();
+                self.builder.build_store(
+                    buckets,
+                    self.builder.build_bitcast(
+                        self.builder
+                            .build_malloc(self.entrystruct(maptype).array_type(16), "buckets_alloc")
+                            .unwrap(),
+                        self.entrystruct(maptype).ptr_type(AddressSpace::default()),
+                        "buckets_ptr",
+                    ),
+                );
+            }
+            crate::parser::StatementType::Free(_, Some(i)) => {
+				let map = self.vars.get(i).unwrap();
+				let buckets = self
+                    .builder
+                    .build_struct_gep(*map, 2, "buckets_ptr")
+                    .unwrap();
+				self.builder.build_free(self.builder.build_load(buckets, "buckets").into_pointer_value());
+                self.builder.build_free(*map);
             }
             crate::parser::StatementType::If(ifpart, ifelsepart, elseblock) => {
                 let condblocks: Vec<_> = once_with(|| ifpart)

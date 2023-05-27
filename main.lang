@@ -1,3 +1,5 @@
-fn main() {
-	create <int,int> map
+fn int main() {
+	create <int,void> mitmff
+	free mitmff
+	return 0
 }

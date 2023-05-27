@@ -23,13 +23,14 @@ unitType  = { "void" }
 mapType = { "<" ~ type ~ "," ~ type ~ ">" }
 structmapType  = {"<" ~ identifier ~ ">"}
 
-reserved        =  { type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword }
+reserved        =  { type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword | freeKeyword }
 functionKeyword = _{ "fn" }
 whileKeyword    = _{ "while" }
 ifKeyword       = _{ "if" }
 elseKeyword     = _{ "else" }
 returnKeyword   = _{ "return" }
 createKeyword   = _{ "create" }
+freeKeyword 	= _{ "free" }
 
 identifier = @{
     !reserved ~ (alpha ~ (alpha | digit)*)
@@ -111,10 +112,10 @@ while    =  { whileKeyword ~ expression ~ scope }
 function =  { functionKeyword ~ type? ~ identifier ~ "(" ~ (type ~ identifier ~ ("," ~ type ~ identifier)*)? ~ ")" ~ scope }
 
 return = { (returnKeyword ~ expression) }
-
+free = { (freeKeyword ~ identifier) }
 /// no nested functions and nested scopes for now
 block = {
-    (if | while | assignment | creation | mapCall | call)* ~ return?
+    (if | while | assignment | creation | free | mapCall | call)* ~ return?
 }
 
 program = {

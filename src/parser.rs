@@ -143,6 +143,7 @@ pub enum StatementType<'a> {
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Return(Expression<'a>),
     Creation(Type, Identifier<'a>, Option<i32>),
+    Free(Identifier<'a>, Option<i32>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -501,6 +502,16 @@ impl<'a> FileParser {
                                     None,
                                 )
                             },
+                        },
+                        Rule::free => Statement {
+                            pos: Possition {
+                                filename: &self.path,
+                                span,
+                            },
+                            statement: StatementType::Free(
+                                sp.into_inner().next().expect("identifier").as_str(),
+                                None,
+                            ),
                         },
                         _ => {
                             panic!("unreachable")
