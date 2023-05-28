@@ -1,14 +1,5 @@
 fn int main() {
-	<int,int> map = cm()
-	printInt(map.size())
-	println()
-	free map
-	printInt(map.size())
-	println()
-	return 0
-}
-
-fn <int,int> cm() {
 	create <int,int> map
-	return map
+	map.insert(1,2)
+	return 0
 }
