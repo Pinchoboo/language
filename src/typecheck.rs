@@ -7,7 +7,7 @@ use std::{
 use derivative::Derivative;
 
 use crate::{
-    functions::PREDEFINED_FUNCTIONS,
+    functions::{self, PREDEFINED_FUNCTIONS},
     parser::{BinOp, Block, Expression, Identifier, Program, Type, UnOp, Value},
 };
 
@@ -210,6 +210,26 @@ impl<'a> TypeCheckContext<'a> {
                         panic!("could not find function {id}")
                     }
                 }
+                crate::parser::StatementType::MapCall(id, id2, exprs, o) => {
+                    if let Some((_, Type::Map(k, v), n, _)) =
+                        find_variable(id, block.scopeinfo.clone())
+                    {
+                        *o = Some(n);
+                        if let Err(e) = functions::valid_map_function(
+                            *k,
+                            *v,
+                            &exprs
+                                .iter_mut()
+                                .map(|e| self.check_expression(e, block.scopeinfo.clone()))
+                                .collect(),
+                            id2,
+                        ) {
+                            panic!("{e}");
+                        }
+                    } else {
+                        panic!("could not find map {id}")
+                    }
+                }
                 crate::parser::StatementType::Return(expr) => {
                     if let Some(rt) = returntype {
                         if self.check_expression(expr, block.scopeinfo.clone()) != *rt {
@@ -230,22 +250,24 @@ impl<'a> TypeCheckContext<'a> {
                     {
                         panic!("already a variable or map '{id}' in this scope")
                     }
-					block.scopeinfo.borrow_mut().variables.push((
-						id,
-						t.clone(),
-						self.next_id,
-						None,
-					));
-					*o = Some(self.next_id);
-					self.next_id += 1;
+                    block.scopeinfo.borrow_mut().variables.push((
+                        id,
+                        t.clone(),
+                        self.next_id,
+                        None,
+                    ));
+                    *o = Some(self.next_id);
+                    self.next_id += 1;
                 }
                 crate::parser::StatementType::Free(id, o) => {
-					if let Some((_, Type::Map(_, _), n, _)) = find_variable(id, block.scopeinfo.clone()) {
-						*o = Some(n);
-					}else{
-						panic!("could not find map {id}")
-					}
-				},
+                    if let Some((_, Type::Map(_, _), n, _)) =
+                        find_variable(id, block.scopeinfo.clone())
+                    {
+                        *o = Some(n);
+                    } else {
+                        panic!("could not find map {id}")
+                    }
+                }
             }
         });
         hasreturned
@@ -324,6 +346,26 @@ impl<'a> TypeCheckContext<'a> {
                     v.1
                 } else {
                     panic!("could not find variable {id}")
+                }
+            }
+            Value::MapCall(id, id2, exprs, o) => {
+                if let Some((_, Type::Map(k, v), n, _)) = find_variable(id, scopeinfo.clone())
+                {
+                    *o = Some(n);
+                    match functions::valid_map_function(
+                        *k,
+                        *v,
+                        &exprs
+                            .iter_mut()
+                            .map(|e| self.check_expression(e, scopeinfo.clone()))
+                            .collect(),
+                        id2,
+                    ) {
+                        Ok(t) => t,
+                        Err(e) => panic!("{e}"),
+                    }
+                } else {
+                    panic!("could not find map {id}")
                 }
             }
         }

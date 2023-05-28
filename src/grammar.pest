@@ -41,10 +41,10 @@ call = {
 }
 
 value = _{
-    number
+    number	
   | boolean
-  | mapCall
   | "(" ~ expression ~ ")"
+  | mapCall  
   | call
   | identifier
   | char

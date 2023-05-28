@@ -1,5 +1,14 @@
 fn int main() {
-	create <int,void> mitmff
-	free mitmff
+	<int,int> map = cm()
+	printInt(map.size())
+	println()
+	free map
+	printInt(map.size())
+	println()
 	return 0
+}
+
+fn <int,int> cm() {
+	create <int,int> map
+	return map
 }

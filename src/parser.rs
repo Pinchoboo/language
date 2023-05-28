@@ -144,6 +144,12 @@ pub enum StatementType<'a> {
     Return(Expression<'a>),
     Creation(Type, Identifier<'a>, Option<i32>),
     Free(Identifier<'a>, Option<i32>),
+    MapCall(
+        Identifier<'a>,
+        Identifier<'a>,
+        Vec<Expression<'a>>,
+        Option<i32>,
+    ),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -176,6 +182,7 @@ pub enum Value<'a> {
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Identifier(Identifier<'a>, Option<i32>),
     Char(char),
+    MapCall(Identifier<'a>, Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BinOp {
@@ -513,6 +520,24 @@ impl<'a> FileParser {
                                 None,
                             ),
                         },
+                        Rule::mapCall => Statement {
+                            pos: Possition {
+                                filename: &self.path,
+                                span,
+                            },
+                            statement: {
+                                let mut inner = sp.into_inner();
+                                StatementType::MapCall(
+                                    inner.next().expect("identifier").as_str(),
+                                    {
+                                        inner = inner.next().unwrap().into_inner();
+                                        inner.next().expect("identifier").as_str()
+                                    },
+                                    inner.map(|e| self.parse_expression(e)).collect(),
+                                    None,
+                                )
+                            },
+                        },
                         _ => {
                             panic!("unreachable")
                         }
@@ -569,6 +594,17 @@ impl<'a> FileParser {
                 )
             }
             Rule::char => Value::Char(pair.as_str().chars().nth(1).unwrap()),
+            Rule::mapCall => {
+				let mut inner = pair.into_inner();
+				Value::MapCall(
+                inner.next().expect("identifier").as_str(),
+                {
+                    inner = inner.next().unwrap().into_inner();
+                    inner.next().expect("identifier").as_str()
+                },
+                inner.map(|e| self.parse_expression(e)).collect(),
+                None,
+            )},
             _ => panic!("unreachable"),
         }
     }

@@ -1,5 +1,6 @@
 use std::{
-    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command, rc::Rc,
+    any::Any, cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command,
+    rc::Rc,
 };
 
 use inkwell::{
@@ -8,7 +9,10 @@ use inkwell::{
     module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
-    values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue},
+    values::{
+        AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue,
+        PointerValue,
+    },
     AddressSpace, OptimizationLevel,
 };
 
@@ -54,7 +58,10 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
             let val = self.llvmtype(v);
             self.entrystructs.entry(t.clone()).or_insert({
                 let st = self.context.opaque_struct_type(&struct_name);
-                st.set_body(&[key, val, st.ptr_type(AddressSpace::default()).into()], true);
+                st.set_body(
+                    &[key, val, st.ptr_type(AddressSpace::default()).into()],
+                    false,
+                );
                 st
             })
         } else {
@@ -88,11 +95,14 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Char => self.context.i64_type().as_basic_type_enum(),
             Type::Unit => self.context.custom_width_int_type(0).as_basic_type_enum(),
-            Type::Map(_, _) => self.mapstruct(t).as_basic_type_enum(),
+            Type::Map(_, _) => self
+                .mapstruct(t)
+                .ptr_type(AddressSpace::default())
+                .as_basic_type_enum(),
         }
     }
     fn llvmfunctiontype(
-        &self,
+        &mut self,
         t: &Type,
         param_types: &[BasicMetadataTypeEnum<'ctx>],
         is_var_args: bool,
@@ -103,7 +113,11 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
             Type::Bool => self.context.bool_type().fn_type(param_types, is_var_args),
             Type::Char => self.context.i64_type().fn_type(param_types, is_var_args),
             Type::Unit => self.context.void_type().fn_type(param_types, is_var_args),
-            Type::Map(_, _) => todo!(),
+            Type::Map(_, _) => self
+                .mapstruct(t)
+                .ptr_type(AddressSpace::default())
+                .as_basic_type_enum()
+                .fn_type(param_types, is_var_args),
         }
     }
 
@@ -282,7 +296,10 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                 let varname = format!("{id}_{i}");
                 let pointer = {
                     if t.is_some() {
-                        let p = self.builder.build_alloca(self.context.i64_type(), &varname);
+                        let p = self.builder.build_alloca(
+                            self.llvmtype(&(t.as_ref().unwrap().clone())),
+                            &varname,
+                        );
                         self.vars.insert(*i, p);
                         p
                     } else {
@@ -290,7 +307,6 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     }
                 };
                 let value = self.emit_expression(expr, scopeinfo, fv);
-
                 self.builder.build_store(pointer, value);
             }
             crate::parser::StatementType::Creation(maptype, id, Some(i)) => {
@@ -299,43 +315,61 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     .builder
                     .build_malloc(*self.mapstruct(maptype), &varname)
                     .unwrap();
-                self.vars.insert(*i, map);
+
+                let initial_capacity: u32 = 16;
 
                 let capacity = self
                     .builder
                     .build_struct_gep(map, 0, &(varname.clone() + ".capacity"))
                     .unwrap();
-                self.builder
-                    .build_store(capacity, self.context.i64_type().const_int(16, false));
-                let size = self
+                self.builder.build_store(
+                    capacity,
+                    self.context
+                        .i64_type()
+                        .const_int(initial_capacity.into(), false),
+                );
+                /*let size = self
                     .builder
                     .build_struct_gep(map, 1, &(varname.clone() + ".size"))
                     .unwrap();
                 self.builder
                     .build_store(size, self.context.i64_type().const_int(0, false));
-                let buckets = self
+                */
+				let buckets = self
                     .builder
-                    .build_struct_gep(map, 2, &(varname + ".buckets"))
+                    .build_struct_gep(map, 2, &(varname.clone() + ".buckets"))
                     .unwrap();
                 self.builder.build_store(
                     buckets,
                     self.builder.build_bitcast(
                         self.builder
-                            .build_malloc(self.entrystruct(maptype).array_type(16), "buckets_alloc")
+                            .build_malloc(
+                                self.entrystruct(maptype).array_type(initial_capacity),
+                                "buckets_alloc",
+                            )
                             .unwrap(),
                         self.entrystruct(maptype).ptr_type(AddressSpace::default()),
                         "buckets_ptr",
                     ),
                 );
+
+                let mapptr = self.builder.build_alloca(self.llvmtype(maptype), &varname);
+				self.builder.build_store(mapptr, map);
+                self.vars.insert(*i, mapptr);
             }
-            crate::parser::StatementType::Free(_, Some(i)) => {
-				let map = self.vars.get(i).unwrap();
-				let buckets = self
+            crate::parser::StatementType::Free(id, Some(i)) => {
+                let mapptr = self.vars.get(i).unwrap();
+				let map = self.builder.build_load(*mapptr, "").into_pointer_value();
+                let buckets = self
                     .builder
-                    .build_struct_gep(*map, 2, "buckets_ptr")
+                    .build_struct_gep(map, 2, "buckets_ptr")
                     .unwrap();
-				self.builder.build_free(self.builder.build_load(buckets, "buckets").into_pointer_value());
-                self.builder.build_free(*map);
+                self.builder.build_free(
+                    self.builder
+                        .build_load(buckets, "buckets")
+                        .into_pointer_value(),
+                );
+                self.builder.build_free(map);
             }
             crate::parser::StatementType::If(ifpart, ifelsepart, elseblock) => {
                 let condblocks: Vec<_> = once_with(|| ifpart)
@@ -393,38 +427,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                 self.builder.position_at_end(afterwhilelable)
             }
             crate::parser::StatementType::Call(id, args, Some(i)) => {
-                let args: Vec<_> = args
-                    .iter()
-                    .map(|expr| {
-                        BasicMetadataValueEnum::from(self.emit_expression(
-                            expr,
-                            scopeinfo.clone(),
-                            fv,
-                        ))
-                    })
-                    .collect();
-                if *i == -1 {
-                    match *id {
-                        functions::PRINT_INT => {
-                            self.emit_printf_call(&"%d", &args);
-                        }
-                        functions::PRINT_BOOL => {
-                            self.emit_printf_call(&{ "%d" }, &args);
-                        }
-                        functions::PRINTLN => {
-                            self.emit_printf_call(&{ "\n" }, &args);
-                        }
-                        functions::PRINT_CHAR => {
-                            self.emit_printf_call(&{ "%c" }, &args);
-                        }
-                        _ => {
-                            panic!("unknown function: {id}")
-                        }
-                    }
-                } else {
-                    self.builder
-                        .build_call(self.module.get_function(id).unwrap(), &args, "");
-                }
+                self.emit_call(id, args, i, scopeinfo, fv);
             }
             crate::parser::StatementType::Return(e) => {
                 self.builder
@@ -528,40 +531,84 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     .bool_type()
                     .const_int(if *b { 1 } else { 0 }, false),
             ),
-            Value::Call(id, args, Some(i)) => {
-                let args: Vec<_> = args
-                    .iter()
-                    .map(|expr| {
-                        BasicMetadataValueEnum::from(self.emit_expression(
-                            expr,
-                            scopeinfo.clone(),
-                            fv,
-                        ))
-                    })
-                    .collect();
-                if *i == -1 {
-                    match *id {
-                        "printInt" => self.emit_printf_call(&"%d", &args),
-                        "printBool" => self.emit_printf_call(&{ "%d" }, &args),
-                        "println" => self.emit_printf_call(&{ "\n" }, &args),
-                        "printChar" => self.emit_printf_call(&{ "%c" }, &args),
-                        _ => {
-                            panic!("unknown function: {id}")
-                        }
-                    }
-                } else {
-                    self.builder
-                        .build_call(self.module.get_function(id).unwrap(), &args, "")
-                }
+            Value::Call(id, args, Some(i)) => self
+                .emit_call(id, args, i, scopeinfo, fv)
                 .try_as_basic_value()
-                .unwrap_left()
-            }
+                .unwrap_left(),
             Value::Identifier(id, Some(_)) => {
                 let foundvar = typecheck::find_variable(id, scopeinfo).unwrap();
                 self.builder
                     .build_load(*self.vars.get(&foundvar.2).unwrap(), "")
             }
+            Value::MapCall(id, id2, exprs, Some(i)) => {
+                self.emit_map_call(id, id2, exprs, i, scopeinfo, fv)
+            }
             _ => panic!("unreachable"),
+        }
+    }
+
+    fn emit_call(
+        &self,
+        id: &&str,
+        args: &[Expression],
+        i: &i32,
+        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        fv: FunctionValue<'ctx>,
+    ) -> CallSiteValue<'ctx> {
+        let args: Vec<_> = args
+            .iter()
+            .map(|expr| {
+                BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone(), fv))
+            })
+            .collect();
+        if *i == -1 {
+            match *id {
+                functions::PRINT_INT => self.emit_printf_call(&"%lu", &args),
+                functions::PRINT_BOOL => self.emit_printf_call(&{ "%d" }, &args),
+                functions::PRINTLN => self.emit_printf_call(&{ "\n" }, &args),
+                functions::PRINT_CHAR => self.emit_printf_call(&{ "%c" }, &args),
+                _ => {
+                    panic!("unknown function: {id}")
+                }
+            }
+        } else {
+            self.builder
+                .build_call(self.module.get_function(id).unwrap(), &args, "")
+        }
+    }
+
+    fn emit_map_call(
+        &self,
+        id: &&str,
+        id2: &&str,
+        args: &[Expression],
+        i: &i32,
+        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        fv: FunctionValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let args: Vec<_> = args
+            .iter()
+            .map(|expr| {
+                BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone(), fv))
+            })
+            .collect();
+        let foundvar = typecheck::find_variable(id, scopeinfo).unwrap();
+        let mapptr = *self.vars.get(&foundvar.2).unwrap();
+		let map = self.builder.build_load(mapptr, id).into_pointer_value();
+        match *id2 {
+            functions::SIZE => {
+                let size = self
+                    .builder
+                    .build_struct_gep(map, 1, &(id.to_string() + ".size"))
+                    .unwrap();
+                self.builder.build_load(size, "")
+            }
+            functions::INSERT => {
+                todo!()
+            }
+			_ => {
+                panic!("unreachable")
+            }
         }
     }
 }
