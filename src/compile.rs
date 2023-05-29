@@ -22,6 +22,7 @@ use crate::{
     typecheck::{self, ScopeInfo},
 };
 const PRINTF: &str = "printf";
+const MEMSET: &str = "memset";
 pub struct Compiler<'ctx, 'a> {
     pub context: &'ctx Context,
     pub builder: &'a Builder<'ctx>,
@@ -134,6 +135,21 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         .ptr_type(AddressSpace::default())
                         .into()],
                     true,
+                ),
+                Some(Linkage::External),
+            );
+            self.module.add_function(
+                MEMSET,
+                self.context.void_type().fn_type(
+                    &[
+                        self.context
+                            .i8_type()
+                            .ptr_type(AddressSpace::default())
+                            .into(),
+                        self.context.i32_type().into(),
+                        self.context.i32_type().into(),
+                    ],
+                    false,
                 ),
                 Some(Linkage::External),
             );
@@ -340,13 +356,13 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 .i64_type()
                                 .const_int(initial_capacity.into(), false),
                         );
-                        /*let size = self
+                        let size = self
                             .builder
                             .build_struct_gep(map, MAP_SIZE, &(varname.clone() + ".size"))
                             .unwrap();
                         self.builder
                             .build_store(size, self.context.i64_type().const_int(0, false));
-                        */
+
                         let keys = self
                             .builder
                             .build_struct_gep(map, MAP_KEYS, &(varname.clone() + ".keys"))
@@ -364,20 +380,45 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "keys_ptr",
                             ),
                         );
-                        //todo memset
-						let states = self
+                        let states = self
                             .builder
                             .build_struct_gep(map, MAP_STATES, &(varname.clone() + ".states"))
                             .unwrap();
+                        let states_alloc = self
+                            .builder
+                            .build_malloc(
+                                self.llvmtype(&Type::Int).array_type(initial_capacity),
+                                "states_alloc",
+                            )
+                            .unwrap();
+                        self.builder.build_call(
+                            self.module.get_function(MEMSET).unwrap(),
+                            &[
+                                self.builder
+                                    .build_bitcast(
+                                        states_alloc,
+                                        self.context.i8_type().ptr_type(AddressSpace::default()),
+                                        "",
+                                    )
+                                    .into(),
+                                self.context.i32_type().const_zero().into(),
+                                self.builder
+                                    .build_int_cast(
+                                        self.llvmtype(&Type::Int)
+                                            .array_type(initial_capacity)
+                                            .size_of()
+                                            .unwrap(),
+                                        self.context.i32_type(),
+                                        "",
+                                    )
+                                    .into(),
+                            ],
+                            "",
+                        );
                         self.builder.build_store(
                             states,
                             self.builder.build_bitcast(
-                                self.builder
-                                    .build_malloc(
-                                        self.llvmtype(&Type::Int).array_type(initial_capacity),
-                                        "states_alloc",
-                                    )
-                                    .unwrap(),
+                                states_alloc,
                                 self.llvmtype(&Type::Int).ptr_type(AddressSpace::default()),
                                 "states_ptr",
                             ),
@@ -816,8 +857,10 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "",
                             )
                         };
-						self.emit_printf_call(&"STATE = %lu\n", &[self.builder.build_load(state, "state_idx").into()]);
-                        
+                        self.emit_printf_call(
+                            &"STATE = %lu\n",
+                            &[self.builder.build_load(state, "state_idx").into()],
+                        );
 
                         let whilecond2 = self.context.append_basic_block(fv, "whilecond2");
                         let whilebody = self.context.append_basic_block(fv, "whilebody");
@@ -874,7 +917,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         self.builder.position_at_end(afterwhile);
                         let ifbody = self.context.append_basic_block(fv, "ifbody");
                         let afterif = self.context.append_basic_block(fv, "afterif");
-						self.builder.build_conditional_branch(
+                        self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::EQ,
                                 self.builder.build_load(state, "state_idx").into_int_value(),
@@ -894,16 +937,21 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "sizeinc",
                             ),
                         );
-						self.emit_printf_call(&"INC SIZE\n", &[]);
+                        self.emit_printf_call(&"INC SIZE\n", &[]);
                         self.builder.build_unconditional_branch(afterif);
                         self.builder.position_at_end(afterif);
-						
-						// set state key and value
-						self.builder.build_store(unsafe { self.builder.build_gep(
-                                states.into_pointer_value(),
-                                &[self.builder.build_load(idx, "").into_int_value()],
-                                "",
-                            ) }, self.context.i64_type().const_int(STATE_TAKEN, false));
+
+                        // set state key and value
+                        self.builder.build_store(
+                            unsafe {
+                                self.builder.build_gep(
+                                    states.into_pointer_value(),
+                                    &[self.builder.build_load(idx, "").into_int_value()],
+                                    "",
+                                )
+                            },
+                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                        );
 
                         self.builder.build_return(None);
                         self.builder.position_at_end(call_block);
