@@ -33,3 +33,14 @@ insert(map, k, v) {
 	map.keys[i] = k
 	map.values[i] = v
 }
+
+get(map, k) {
+	i = hash(k) % map.capacity
+	while map.state[i] != FREE {
+		if map.state[i] == TAKEN && map.keys[i] == k {
+			return map.values[i]
+		}
+		i = (i + 1) % map.capacity
+	}
+	return null
+}

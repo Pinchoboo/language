@@ -720,7 +720,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         if let Some((_, Type::Map(k, v), i, _)) = typecheck::find_variable(id, scopeinfo) {
             let llvmkeytype = self.llvmtype(&k);
             let llvmvaluetype = self.llvmtype(&v);
-            let maptype = Type::Map(k, v);
+            let maptype = Type::Map(k.clone(), v.clone());
             let llvmmaptype = self.llvmtype(&maptype);
             let mapptr = *self.vars.get(&i).unwrap();
             let map = self.builder.build_load(mapptr, id).into_pointer_value();
@@ -857,15 +857,12 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "",
                             )
                         };
-                        self.emit_printf_call(
-                            &"STATE = %lu\n",
-                            &[self.builder.build_load(state, "state_idx").into()],
-                        );
 
                         let whilecond2 = self.context.append_basic_block(fv, "whilecond2");
                         let whilebody = self.context.append_basic_block(fv, "whilebody");
                         let afterwhile = self.context.append_basic_block(fv, "afterwhile");
-                        self.builder.build_conditional_branch(
+                        self.emit_printf_call(&"B1\n", &[]);
+						self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::EQ,
                                 self.builder.build_load(state, "state_idx").into_int_value(),
@@ -876,11 +873,12 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             afterwhile,
                         );
                         self.builder.position_at_end(whilecond2);
+						
                         let keys = self.builder.build_load(
                             self.builder
                                 .build_struct_gep(
                                     fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                    MAP_STATES,
+                                    MAP_KEYS,
                                     &(id.to_string() + ".keys.ptr"),
                                 )
                                 .unwrap(),
@@ -893,6 +891,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "",
                             )
                         };
+						self.emit_printf_call(&"B2 KEY=%lu ARG=%lu\n", &[self.builder.build_load(key, "keys_idx").into(),fv.get_nth_param(KEY_PARAM).unwrap().into()]);
                         self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::NE,
@@ -953,6 +952,54 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             self.context.i64_type().const_int(STATE_TAKEN, false),
                         );
 
+                        self.builder.build_store(
+                            unsafe {
+                                self.builder.build_gep(
+                                    self.builder
+                                        .build_load(
+                                            self.builder
+                                                .build_struct_gep(
+                                                    fv.get_nth_param(MAP_PARAM)
+                                                        .unwrap()
+                                                        .into_pointer_value(),
+                                                    MAP_KEYS,
+                                                    &(id.to_string() + ".keys.ptr"),
+                                                )
+                                                .unwrap(),
+                                            "keys",
+                                        )
+                                        .into_pointer_value(),
+                                    &[self.builder.build_load(idx, "").into_int_value()],
+                                    "",
+                                )
+                            },
+                            fv.get_nth_param(KEY_PARAM).unwrap(),
+                        );
+
+                        self.builder.build_store(
+                            unsafe {
+                                self.builder.build_gep(
+                                    self.builder
+                                        .build_load(
+                                            self.builder
+                                                .build_struct_gep(
+                                                    fv.get_nth_param(MAP_PARAM)
+                                                        .unwrap()
+                                                        .into_pointer_value(),
+                                                    MAP_VALUES,
+                                                    &(id.to_string() + ".value.ptr"),
+                                                )
+                                                .unwrap(),
+                                            "value",
+                                        )
+                                        .into_pointer_value(),
+                                    &[self.builder.build_load(idx, "").into_int_value()],
+                                    "",
+                                )
+                            },
+                            fv.get_nth_param(VALUE_PARAM).unwrap(),
+                        );
+
                         self.builder.build_return(None);
                         self.builder.position_at_end(call_block);
                         fv
@@ -961,7 +1008,191 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     self.context.custom_width_int_type(0).const_zero().into()
                 }
                 functions::GET => {
-                    todo!()
+                    let fname = format!("{}_get", &maptype);
+                    let fv = if let Some(fv) = self.module.get_function(&fname) {
+                        fv
+                    } else {
+                        const MAP_PARAM: u32 = 0;
+                        const KEY_PARAM: u32 = 1;
+                        let fv = self.module.add_function(
+                            &fname,
+                            self.llvmfunctiontype(
+                                &v,
+                                &[llvmmaptype.into(), llvmkeytype.into()],
+                                false,
+                            ),
+                            None,
+                        );
+                        let call_block = self.builder.get_insert_block().unwrap();
+                        self.builder
+                            .position_at_end(self.context.append_basic_block(fv, "entry"));
+                        /*
+                        get(map, k) {
+                            i = hash(k) % map.capacity
+                            while map.state[i] != FREE {
+                                if map.state[i] == TAKEN && map.keys[i] == k {
+                                    return map.values[i]
+                                }
+                                i = (i + 1) % map.capacity
+                            }
+                            return null
+                        }
+                        */
+
+                        let hash = self.builder.build_bitcast(
+                            fv.get_nth_param(KEY_PARAM).unwrap(),
+                            self.llvmtype(&Type::Int),
+                            "hash",
+                        );
+
+                        let capacity = self.builder.build_load(
+                            self.builder
+                                .build_struct_gep(
+                                    fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                                    MAP_CAPACITY,
+                                    &(id.to_string() + ".capacity.ptr"),
+                                )
+                                .unwrap(),
+                            "capacity",
+                        );
+
+                        let states = self.builder.build_load(
+                            self.builder
+                                .build_struct_gep(
+                                    fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                                    MAP_STATES,
+                                    &(id.to_string() + ".states.ptr"),
+                                )
+                                .unwrap(),
+                            "states",
+                        );
+
+                        let keys = self.builder.build_load(
+                            self.builder
+                                .build_struct_gep(
+                                    fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                                    MAP_KEYS,
+                                    &(id.to_string() + ".keys.ptr"),
+                                )
+                                .unwrap(),
+                            "keys",
+                        );
+
+                        let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                        self.builder.build_store(
+                            idx,
+                            self.builder.build_int_unsigned_rem(
+                                hash.into_int_value(),
+                                capacity.into_int_value(),
+                                "",
+                            ),
+                        );
+
+                        let whilecond = self.context.append_basic_block(fv, "whilecond");
+                        let whilebody = self.context.append_basic_block(fv, "whilebody");
+                        let afterwhile = self.context.append_basic_block(fv, "afterwhile");
+
+                        self.builder.build_unconditional_branch(whilecond);
+                        self.builder.position_at_end(whilecond);
+
+                        let state = unsafe {
+                            self.builder.build_gep(
+                                states.into_pointer_value(),
+                                &[self.builder.build_load(idx, "").into_int_value()],
+                                "",
+                            )
+                        };
+
+                        let key = unsafe {
+                            self.builder.build_gep(
+                                keys.into_pointer_value(),
+                                &[self.builder.build_load(idx, "").into_int_value()],
+                                "",
+                            )
+                        };
+
+                        self.builder.build_conditional_branch(
+                            self.builder.build_int_compare(
+                                IntPredicate::NE,
+                                self.builder.build_load(state, "state_idx").into_int_value(),
+                                self.context.i64_type().const_int(STATE_FREE, false),
+                                "is_not_state_free",
+                            ),
+                            whilebody,
+                            afterwhile,
+                        );
+                        self.builder.position_at_end(whilebody);
+
+                        //if
+                        let ifbody = self.context.append_basic_block(fv, "ifbody");
+                        let afterif = self.context.append_basic_block(fv, "afterif");
+
+                        self.builder.build_conditional_branch(
+                            self.builder.build_and(
+                                self.builder.build_int_compare(
+                                    IntPredicate::EQ,
+                                    self.builder.build_load(state, "state_idx").into_int_value(),
+                                    self.context.i64_type().const_int(STATE_TAKEN, false),
+                                    "is_state_taken",
+                                ),
+                                self.builder.build_int_compare(
+                                    IntPredicate::EQ,
+                                    self.builder.build_load(key, "key_idx").into_int_value(),
+                                    fv.get_nth_param(KEY_PARAM).unwrap().into_int_value(),
+                                    "is_key_equal",
+                                ),
+                                "ifcond",
+                            ),
+                            ifbody,
+                            afterif,
+                        );
+                        self.builder.position_at_end(ifbody);
+                        self.builder.build_return(Some(&self.builder.build_load(
+                            unsafe {
+                                self.builder.build_gep(
+                                    self.builder
+                                        .build_load(
+                                            self.builder
+                                                .build_struct_gep(
+                                                    fv.get_nth_param(MAP_PARAM)
+                                                        .unwrap()
+                                                        .into_pointer_value(),
+                                                    MAP_VALUES,
+                                                    &(id.to_string() + ".values.ptr"),
+                                                )
+                                                .unwrap(),
+                                            "values",
+                                        )
+                                        .into_pointer_value(),
+                                    &[self.builder.build_load(idx, "").into_int_value()],
+                                    "",
+                                )
+                            },
+                            "",
+                        )));
+                        self.builder.position_at_end(afterif);
+
+                        self.builder.build_store(
+                            idx,
+                            self.builder.build_int_add(
+                                self.builder.build_load(idx, "").into_int_value(),
+                                self.context.i64_type().const_int(1, false),
+                                "",
+                            ),
+                        );
+                        self.builder.build_unconditional_branch(whilecond);
+
+                        self.builder.position_at_end(afterwhile);
+                        self.emit_printf_call(&"KEY NOT IN MAP\n", &[]);
+                        self.builder
+                            .build_return(Some(&self.llvmtype(&Type::Int).const_zero()));
+                        self.builder.position_at_end(call_block);
+                        fv
+                    };
+                    self.builder
+                        .build_call(fv, &allargs, "")
+                        .try_as_basic_value()
+                        .unwrap_left()
                 }
                 functions::CLEAR => {
                     todo!()

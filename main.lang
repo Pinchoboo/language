@@ -2,14 +2,16 @@ fn int main() {
 	create <int,int> map
 	printInt(map.size())
 	println()
-	map.insert(0,2)
+	map.insert(0,10)
 	printInt(map.size())
 	println()
-	map.insert(0,4)
+	map.insert(16,4)
 	printInt(map.size())
 	println()
 	map.insert(0,6)
 	printInt(map.size())
+	println()
+	printInt(map.get(0))
 	println()
 	return 0
 }
