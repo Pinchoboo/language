@@ -1,5 +1,15 @@
 fn int main() {
 	create <int,int> map
+	printInt(map.size())
+	println()
 	map.insert(1,2)
+	printInt(map.size())
+	println()
+	map.insert(1,4)
+	printInt(map.size())
+	println()
+	map.insert(1,6)
+	printInt(map.size())
+	println()
 	return 0
 }
