@@ -4,6 +4,7 @@ use std::{
 };
 
 use inkwell::{
+    basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     module::{Linkage, Module},
@@ -819,13 +820,16 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         self.builder.build_unreachable();
 
                         self.builder.position_at_end(afterhash);
+                        let hash = self
+                            .builder
+                            .build_call(
+                                self.hash(&k),
+                                &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                                "",
+                            )
+                            .try_as_basic_value()
+                            .unwrap_left();
 
-                        //todo hash function
-                        let hash = self.builder.build_bitcast(
-                            fv.get_nth_param(KEY_PARAM).unwrap(),
-                            self.llvmtype(&Type::Int),
-                            "hash",
-                        );
                         let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
                         self.builder.build_store(
                             idx,
@@ -862,7 +866,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         let whilebody = self.context.append_basic_block(fv, "whilebody");
                         let afterwhile = self.context.append_basic_block(fv, "afterwhile");
                         self.emit_printf_call(&"B1\n", &[]);
-						self.builder.build_conditional_branch(
+                        self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::EQ,
                                 self.builder.build_load(state, "state_idx").into_int_value(),
@@ -873,7 +877,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             afterwhile,
                         );
                         self.builder.position_at_end(whilecond2);
-						
+
                         let keys = self.builder.build_load(
                             self.builder
                                 .build_struct_gep(
@@ -891,7 +895,13 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "",
                             )
                         };
-						self.emit_printf_call(&"B2 KEY=%lu ARG=%lu\n", &[self.builder.build_load(key, "keys_idx").into(),fv.get_nth_param(KEY_PARAM).unwrap().into()]);
+                        self.emit_printf_call(
+                            &"B2 KEY=%lu ARG=%lu\n",
+                            &[
+                                self.builder.build_load(key, "keys_idx").into(),
+                                fv.get_nth_param(KEY_PARAM).unwrap().into(),
+                            ],
+                        );
                         self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::NE,
@@ -1039,11 +1049,15 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         }
                         */
 
-                        let hash = self.builder.build_bitcast(
-                            fv.get_nth_param(KEY_PARAM).unwrap(),
-                            self.llvmtype(&Type::Int),
-                            "hash",
-                        );
+                        let hash = self
+                            .builder
+                            .build_call(
+                                self.hash(&k),
+                                &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                                "",
+                            )
+                            .try_as_basic_value()
+                            .unwrap_left();
 
                         let capacity = self.builder.build_load(
                             self.builder
@@ -1204,5 +1218,40 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         } else {
             panic!("should exists")
         }
+    }
+
+    fn hash(&mut self, t: &Type) -> FunctionValue<'ctx> {
+        let s = format!("hash_{t}");
+        let fv = if let Some(fv) = self.module.get_function(&s) {
+            fv
+        } else {
+            let args = vec![self.llvmtype(t).into()];
+            let fv =
+                self.module
+                    .add_function(&s, self.llvmfunctiontype(&Type::Int, &args, false), None);
+            let call_block = self.builder.get_insert_block();
+            self.builder
+                .position_at_end(self.context.append_basic_block(fv, "entry"));
+            match t {
+                Type::Map(_, _) => todo!(),
+                Type::Unit => {
+                    self.builder
+                        .build_return(Some(&self.llvmtype(&Type::Int).const_zero()));
+                }
+                _ => {
+                    self.builder.build_return(Some(&self.builder.build_bitcast(
+                        fv.get_nth_param(0).unwrap(),
+                        self.llvmtype(&Type::Int),
+                        "",
+                    )));
+                }
+            }
+
+            if let Some(bb) = call_block {
+                self.builder.position_at_end(bb);
+            }
+            fv
+        };
+        fv
     }
 }
