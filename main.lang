@@ -1,16 +1,35 @@
 fn int main() {
 	create <int,int> map
+	map.insert(1234,5678)
+	map.insert(11,22)
 	printInt(map.size())
 	println()
-	map.insert(0,10)
-	map.insert(16,10)
-	printInt(map.size())
+	printInt(map.get(11))
+	println()
+	printInt(map.get(1234))
+	println()
 	println()
 	map.clear()
-	map.insert(0,1234)
+
 	printInt(map.size())
 	println()
-	printInt(map.get(0))
+	printInt(map.get(11))
 	println()
+	printInt(map.get(1234))
+	println()
+	println()
+
+	map.insert(1234,5678)
+	map.insert(11,22)
+	map.remove(11)
+
+	printInt(map.size())
+	println()
+	printInt(map.get(11))
+	println()
+	printInt(map.get(1234))
+	println()
+	println()
+	
 	return 0
 }

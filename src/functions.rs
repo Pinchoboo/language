@@ -9,6 +9,7 @@ pub const SIZE: &str = "size";
 pub const CLEAR: &str = "clear";
 pub const GET: &str = "get";
 pub const INSERT: &str = "insert";
+pub const REMOVE: &str = "remove";
 
 lazy_static::lazy_static! {
     pub static ref PREDEFINED_FUNCTIONS: Vec<(&'static str, Vec<Type>, Type)> = {
@@ -42,6 +43,13 @@ pub fn valid_map_function(k: Type, v: Type, args: &Vec<Type>, id: &str) -> Resul
                 Ok(Type::Unit)
             } else {
                 Err(format!("{INSERT} takes [{k}, {v}] as arguments "))
+            }
+        }
+		REMOVE => {
+            if args.len() == 1 && args[0] == k {
+                Ok(Type::Unit)
+            } else {
+                Err(format!("{REMOVE} takes {k} as argument "))
             }
         }
         _ => Err(format!("unknown map function: {id}")),
