@@ -19,31 +19,3 @@ mark tombstone empty
 flat hash set sse instructions 16 probe
 
 2. rehash calculate new size
-3. store tombstone
-
-insert(map, k, v) {
-	if (map.len + 1) > 0.75 * map.capacity {
-		rebuild(map)
-	}
-	i = hash(k) % map.capacity
-	while map.state[i] == TAKEN && map.keys[i] != k {
-		i = (i + 1) % map.capacity
-	}
-	if map.states[i] == FREE {
-		map.size = map.size + 1
-	} 
-	map.states[i] = TAKEN
-	map.keys[i] = k
-	map.values[i] = v
-}
-
-get(map, k) {
-	i = hash(k) % map.capacity
-	while map.state[i] != FREE {
-		if map.state[i] == TAKEN && map.keys[i] == k {
-			return map.values[i]
-		}
-		i = (i + 1) % map.capacity
-	}
-	return null
-}

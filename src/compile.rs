@@ -9,7 +9,7 @@ use inkwell::{
     context::Context,
     module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
-    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
+    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType, StructType},
     values::{
         AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue,
         PointerValue,
@@ -24,6 +24,8 @@ use crate::{
 };
 const PRINTF: &str = "printf";
 const MEMSET: &str = "memset";
+const CALLOC: &str = "calloc";
+
 pub struct Compiler<'ctx, 'a> {
     pub context: &'ctx Context,
     pub builder: &'a Builder<'ctx>,
@@ -53,9 +55,10 @@ pub fn compile(program: Program) {
 
 pub const MAP_CAPACITY: u32 = 0;
 pub const MAP_SIZE: u32 = 1;
-pub const MAP_KEYS: u32 = 2;
-pub const MAP_STATES: u32 = 3;
-pub const MAP_VALUES: u32 = 4;
+pub const MAP_TOMBS: u32 = 2;
+pub const MAP_KEYS: u32 = 3;
+pub const MAP_STATES: u32 = 4;
+pub const MAP_VALUES: u32 = 5;
 
 pub const STATE_FREE: u64 = 0;
 pub const STATE_TOMB: u64 = 1;
@@ -67,6 +70,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
             let struct_name = format!("{t}");
             let capacity = self.context.i64_type();
             let size = self.context.i64_type();
+            let tombs = self.context.i64_type();
             let keys = self.llvmtype(k).ptr_type(AddressSpace::default());
             let states = self.llvmtype(&Type::Int).ptr_type(AddressSpace::default());
             let vals = self.llvmtype(v).ptr_type(AddressSpace::default());
@@ -77,6 +81,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     &[
                         capacity.into(),
                         size.into(),
+                        tombs.into(),
                         keys.into(),
                         states.into(),
                         vals.into(),
@@ -152,6 +157,20 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     ],
                     false,
                 ),
+                Some(Linkage::External),
+            );
+            self.module.add_function(
+                CALLOC,
+                self.context
+                    .i8_type()
+                    .ptr_type(AddressSpace::default())
+                    .fn_type(
+                        &[
+                            self.context.i32_type().into(),
+                            self.context.i32_type().into(),
+                        ],
+                        false,
+                    ),
                 Some(Linkage::External),
             );
         }
@@ -333,6 +352,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     let fv = if let Some(fv) = self.module.get_function(&fname) {
                         fv
                     } else {
+                        let initial_capacity: u32 = 16;
                         let fv = self.module.add_function(
                             &fname,
                             self.llvmfunctiontype(maptype, &[], false),
@@ -345,7 +365,6 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             .builder
                             .build_malloc(*self.mapstruct(maptype), &varname)
                             .unwrap();
-                        let initial_capacity: u32 = 16;
 
                         let capacity = self
                             .builder
@@ -363,6 +382,13 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             .unwrap();
                         self.builder
                             .build_store(size, self.context.i64_type().const_int(0, false));
+
+                        let tombs = self
+                            .builder
+                            .build_struct_gep(map, MAP_TOMBS, &(varname.clone() + ".tombs"))
+                            .unwrap();
+                        self.builder
+                            .build_store(tombs, self.context.i64_type().const_int(0, false));
 
                         let keys = self
                             .builder
@@ -758,14 +784,17 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
 
                         /*
                         insert(map, k, v) {
-                            if (map.len + 1) > 0.75 * map.capacity {
+                            if (map.size + map.tombs + 1) > 0.75 * map.capacity {
                                 rebuild(map)
                             }
                             i = hash(k) % map.capacity
                             while map.state[i] == TAKEN && map.keys[i] != k {
                                 i = (i + 1) % map.capacity
                             }
-                            if map.states[i] == FREE {
+                            if map.states[i] == TOMB {
+                                map.tombs = map.tombs - 1
+                                map.size = map.size + 1
+                            }else if map.states[i] != TAKEN {
                                 map.size = map.size + 1
                             }
                             map.states[i] = TAKEN
@@ -782,6 +811,16 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             )
                             .unwrap();
                         let size = self.builder.build_load(sizeptr, "size");
+
+                        let tombsptr = self
+                            .builder
+                            .build_struct_gep(
+                                fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                                MAP_TOMBS,
+                                &(id.to_string() + ".tombs.ptr"),
+                            )
+                            .unwrap();
+                        let tombs = self.builder.build_load(tombsptr, "tombs");
 
                         let capacity = self.builder.build_load(
                             self.builder
@@ -800,7 +839,11 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             self.builder.build_int_compare(
                                 inkwell::IntPredicate::UGE,
                                 self.builder.build_int_mul(
-                                    size.into_int_value(),
+                                    self.builder.build_int_add(
+                                        size.into_int_value(),
+                                        tombs.into_int_value(),
+                                        "",
+                                    ),
                                     self.context.i64_type().const_int(4, false),
                                     "",
                                 ),
@@ -926,17 +969,53 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         self.builder.position_at_end(afterwhile);
                         let ifbody = self.context.append_basic_block(fv, "ifbody");
                         let afterif = self.context.append_basic_block(fv, "afterif");
+                        let elseifbody = self.context.append_basic_block(fv, "elseifbody");
+                        let afterelseif = self.context.append_basic_block(fv, "afterelseif");
+
+                        let stateidx = self.builder.build_load(state, "state_idx").into_int_value();
+
                         self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::EQ,
-                                self.builder.build_load(state, "state_idx").into_int_value(),
-                                self.context.i64_type().const_int(STATE_FREE, false),
-                                "is_state_free",
+                                stateidx,
+                                self.context.i64_type().const_int(STATE_TOMB, false),
+                                "is_state_tomb",
                             ),
                             ifbody,
                             afterif,
                         );
                         self.builder.position_at_end(ifbody);
+                        self.builder.build_store(
+                            tombsptr,
+                            self.builder.build_int_sub(
+                                tombs.into_int_value(),
+                                self.context.i64_type().const_int(1, false),
+                                "tombsdecr",
+                            ),
+                        );
+                        self.builder.build_store(
+                            sizeptr,
+                            self.builder.build_int_add(
+                                size.into_int_value(),
+                                self.context.i64_type().const_int(1, false),
+                                "sizeinc",
+                            ),
+                        );
+                        self.builder.build_unconditional_branch(afterelseif);
+
+                        self.builder.position_at_end(afterif);
+
+                        self.builder.build_conditional_branch(
+                            self.builder.build_int_compare(
+                                IntPredicate::NE,
+                                stateidx,
+                                self.context.i64_type().const_int(STATE_TAKEN, false),
+                                "is_not_state_taken",
+                            ),
+                            elseifbody,
+                            afterelseif,
+                        );
+                        self.builder.position_at_end(elseifbody);
 
                         self.builder.build_store(
                             sizeptr,
@@ -947,8 +1026,8 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             ),
                         );
                         self.emit_printf_call(&"INC SIZE\n", &[]);
-                        self.builder.build_unconditional_branch(afterif);
-                        self.builder.position_at_end(afterif);
+                        self.builder.build_unconditional_branch(afterelseif);
+                        self.builder.position_at_end(afterelseif);
 
                         // set state key and value
                         self.builder.build_store(
@@ -1209,7 +1288,114 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         .unwrap_left()
                 }
                 functions::CLEAR => {
-                    todo!()
+                    /*
+                    clear(map) {
+                        map.capacity = 16
+                        map.size = 0
+                        map.tombs = 0
+                        free map.keys
+                        map.key = alloc [16 * K]
+                        free map.vals [16 * v]
+                        free map.states [16 * _]
+                    }
+                    */
+                    let fname = format!("{}_clear", &maptype);
+                    let fv = if let Some(fv) = self.module.get_function(&fname) {
+                        fv
+                    } else {
+                        let initial_capacity: u32 = 16;
+                        let fv = self.module.add_function(
+                            &fname,
+                            self.llvmfunctiontype(&Type::Unit, &[llvmmaptype.into()], false),
+                            None,
+                        );
+                        let call_location = self.builder.get_insert_block().unwrap();
+                        self.builder
+                            .position_at_end(self.context.append_basic_block(fv, "entry"));
+
+                        let map = fv.get_nth_param(0).unwrap().into_pointer_value();
+                        self.builder.build_store(
+                            self.builder
+                                .build_struct_gep(map, MAP_CAPACITY, "capacity")
+                                .unwrap(),
+                            self.context
+                                .i64_type()
+                                .const_int(initial_capacity.into(), false),
+                        );
+                        self.builder.build_store(
+                            self.builder
+                                .build_struct_gep(map, MAP_SIZE, "size")
+                                .unwrap(),
+                            self.context.i64_type().const_zero(),
+                        );
+                        self.builder.build_store(
+                            self.builder
+                                .build_struct_gep(map, MAP_TOMBS, "tombs")
+                                .unwrap(),
+                            self.context.i64_type().const_zero(),
+                        );
+
+                        let keyptr = self
+                            .builder
+                            .build_struct_gep(map, MAP_KEYS, "keys.ptr")
+                            .unwrap();
+                        let keys = self.builder.build_load(keyptr, "keys");
+                        self.builder.build_free(keys.into_pointer_value());
+                        self.builder.build_store(
+                            keyptr,
+                            self.builder
+                                .build_array_malloc(
+                                    llvmkeytype,
+                                    self.context
+                                        .i32_type()
+                                        .const_int(initial_capacity.into(), false),
+                                    "",
+                                )
+                                .unwrap(),
+                        );
+
+                        let valuesptr = self
+                            .builder
+                            .build_struct_gep(map, MAP_VALUES, "values.ptr")
+                            .unwrap();
+                        let values = self.builder.build_load(valuesptr, "values");
+                        self.builder.build_free(values.into_pointer_value());
+                        self.builder.build_store(
+                            valuesptr,
+                            self.builder
+                                .build_array_malloc(
+                                    llvmvaluetype,
+                                    self.context
+                                        .i32_type()
+                                        .const_int(initial_capacity.into(), false),
+                                    "",
+                                )
+                                .unwrap(),
+                        );
+
+                        let statessptr = self
+                            .builder
+                            .build_struct_gep(map, MAP_STATES, "states.ptr")
+                            .unwrap();
+                        let states = self.builder.build_load(statessptr, "states");
+                        self.builder.build_free(states.into_pointer_value());
+                        self.builder.build_store(
+                            statessptr,
+                            self.emit_calloc(
+                                self.context.i64_type(),
+                                self.context
+                                    .i32_type()
+                                    .const_int(initial_capacity.into(), false)
+                                    .into(),
+                            ),
+                        );
+
+                        self.builder.build_return(None);
+                        self.builder.position_at_end(call_location);
+                        fv
+                    };
+                    self.builder.build_call(fv, &[map.into()], "");
+                    self.context.custom_width_int_type(0).const_zero().into()
                 }
                 _ => {
                     panic!("unreachable")
@@ -1253,5 +1439,30 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
             fv
         };
         fv
+    }
+
+    fn emit_calloc<T>(&self, t: T, n: BasicMetadataValueEnum<'ctx>) -> PointerValue
+    where
+        T: BasicType<'ctx>,
+    {
+        self.builder
+            .build_bitcast(
+                self.builder
+                    .build_call(
+                        self.module.get_function(CALLOC).unwrap(),
+                        &[
+                            n,
+                            self.builder
+                                .build_bitcast(t.size_of().unwrap(), self.context.i32_type(), "")
+                                .into(),
+                        ],
+                        "calloc",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left(),
+                t.ptr_type(AddressSpace::default()),
+                "",
+            )
+            .into_pointer_value()
     }
 }
