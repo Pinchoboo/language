@@ -19,3 +19,7 @@ mark tombstone empty
 flat hash set sse instructions 16 probe
 
 2. rehash calculate new size
+3. getmaybe
+4. struct type
+5. strings
+6. optimise
