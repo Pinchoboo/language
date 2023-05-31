@@ -18,6 +18,10 @@ mark tombstone empty
 
 flat hash set sse instructions 16 probe
 
+1. hash function
+2. rehash calculate new size
+3. store tombstone
+
 insert(map, k, v) {
 	if (map.len + 1) > 0.75 * map.capacity {
 		rebuild(map)
