@@ -6,6 +6,8 @@ pub const PRINTLN: &str = "println";
 pub const PRINT_CHAR: &str = "printChar";
 
 pub const SIZE: &str = "size";
+pub const CAPACITY: &str = "capacity";
+pub const TOMBS: &str = "tombs";
 pub const CLEAR: &str = "clear";
 pub const GET: &str = "get";
 pub const INSERT: &str = "insert";
@@ -24,9 +26,9 @@ lazy_static::lazy_static! {
 
 pub fn valid_map_function(k: Type, v: Type, args: &Vec<Type>, id: &str) -> Result<Type, String> {
     match id {
-        SIZE | CLEAR => {
+        SIZE | CAPACITY | TOMBS | CLEAR => {
             if args.is_empty() {
-                Ok(if id == SIZE { Type::Int } else { Type::Unit })
+                Ok(if id == CLEAR { Type::Unit } else { Type::Int })
             } else {
                 Err(format!("{id} does not take arguments"))
             }

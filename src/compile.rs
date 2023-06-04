@@ -761,6 +761,20 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         .unwrap();
                     self.builder.build_load(size, "")
                 }
+                functions::CAPACITY => {
+                    let capacity = self
+                        .builder
+                        .build_struct_gep(map, MAP_CAPACITY, &(id.to_string() + ".capacity"))
+                        .unwrap();
+                    self.builder.build_load(capacity, "")
+                }
+                functions::TOMBS => {
+                    let tombs = self
+                        .builder
+                        .build_struct_gep(map, MAP_TOMBS, &(id.to_string() + ".tombs"))
+                        .unwrap();
+                    self.builder.build_load(tombs, "")
+                }
                 functions::INSERT => {
                     let fname = format!("{}_insert", &maptype);
                     let fv = if let Some(fv) = self.module.get_function(&fname) {
@@ -859,8 +873,12 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         );
 
                         self.builder.position_at_end(rehashblock);
-                        //todo
-                        self.builder.build_unreachable();
+                        self.builder.build_call(
+                            self.rehash(&maptype),
+                            &[fv.get_nth_param(MAP_PARAM).unwrap().into()],
+                            "",
+                        );
+                        self.builder.build_unconditional_branch(afterhash);
 
                         self.builder.position_at_end(afterhash);
                         let hash = self
@@ -908,7 +926,6 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         let whilecond2 = self.context.append_basic_block(fv, "whilecond2");
                         let whilebody = self.context.append_basic_block(fv, "whilebody");
                         let afterwhile = self.context.append_basic_block(fv, "afterwhile");
-                        self.emit_printf_call(&"B1\n", &[]);
                         self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::EQ,
@@ -938,13 +955,6 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "",
                             )
                         };
-                        self.emit_printf_call(
-                            &"B2 KEY=%lu ARG=%lu\n",
-                            &[
-                                self.builder.build_load(key, "keys_idx").into(),
-                                fv.get_nth_param(KEY_PARAM).unwrap().into(),
-                            ],
-                        );
                         self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::NE,
@@ -1025,7 +1035,6 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 "sizeinc",
                             ),
                         );
-                        self.emit_printf_call(&"INC SIZE\n", &[]);
                         self.builder.build_unconditional_branch(afterelseif);
                         self.builder.position_at_end(afterelseif);
 
@@ -1295,8 +1304,10 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         map.tombs = 0
                         free map.keys
                         map.key = alloc [16 * K]
-                        free map.vals [16 * v]
-                        free map.states [16 * _]
+                        free map.vals
+						map.vals = alloc [16 * v]
+                        free map.states
+						map.states = alloc [16 * _]
                     }
                     */
                     let fname = format!("{}_clear", &maptype);
@@ -1322,12 +1333,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                                 .i64_type()
                                 .const_int(initial_capacity.into(), false),
                         );
-                        self.builder.build_store(
-                            self.builder
-                                .build_struct_gep(map, MAP_SIZE, "size")
-                                .unwrap(),
-                            self.context.i64_type().const_zero(),
-                        );
+
                         self.builder.build_store(
                             self.builder
                                 .build_struct_gep(map, MAP_TOMBS, "tombs")
@@ -1402,9 +1408,9 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                     remove(map, k) {
                         i = hash(k) % map.capacity
                         while map.state[i] != FREE {
-							if map.state[i] == TOMB {
-								break
-							}
+                            if map.state[i] == TOMB {
+                                break
+                            }
                             if map.keys[i] == k {
                                 map.states[i] + TOMB
                                 map.tombs = map.tombs + 1
@@ -1434,7 +1440,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         self.builder
                             .position_at_end(self.context.append_basic_block(fv, "entry"));
 
-							let sizeptr = self
+                        let sizeptr = self
                             .builder
                             .build_struct_gep(
                                 fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
@@ -1542,8 +1548,8 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         );
                         self.builder.position_at_end(whilebody);
 
-						let noearlyescape = self.context.append_basic_block(fv, "noearlyescape");
-						self.builder.build_conditional_branch(
+                        let noearlyescape = self.context.append_basic_block(fv, "noearlyescape");
+                        self.builder.build_conditional_branch(
                             self.builder.build_int_compare(
                                 IntPredicate::EQ,
                                 self.builder.build_load(state, "state_idx").into_int_value(),
@@ -1553,7 +1559,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             afterwhile,
                             noearlyescape,
                         );
-						self.builder.position_at_end(noearlyescape);
+                        self.builder.position_at_end(noearlyescape);
 
                         //if
                         let ifbody = self.context.append_basic_block(fv, "ifbody");
@@ -1571,7 +1577,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                         );
                         self.builder.position_at_end(ifbody);
 
-						self.builder.build_store(
+                        self.builder.build_store(
                             unsafe {
                                 self.builder.build_gep(
                                     states.into_pointer_value(),
@@ -1581,7 +1587,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             },
                             self.context.i64_type().const_int(STATE_TOMB, false),
                         );
-						self.builder.build_store(
+                        self.builder.build_store(
                             tombsptr,
                             self.builder.build_int_add(
                                 tombs.into_int_value(),
@@ -1662,6 +1668,290 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
             fv
         };
         fv
+    }
+
+    fn rehash(&mut self, t: &Type) -> FunctionValue<'ctx> {
+        /*
+        fn rehash(map) {
+            newcapacity = map.size * 2 + 16
+            newkeys = malloc newcapacity
+            newvalues = malloc newcapacity
+            newstates = calloc newcapacity
+            for i in 0 .. map.capacity {
+                if map.states[i] = TAKEN {
+                    k = map.keys[i]
+                    v = map.values[i]
+                    newi = hash(k) % newcapacity
+                    while newstates[newi] == TAKEN{
+                        newi = (newi + 1) % newcapacity
+                    }
+                    newkeys[newi] = K
+                    newvalues[newi] = map.values[i]
+                    newstates[newi] = TAKEN
+                }
+            }
+            free map.keys
+            map.keys = newkeys
+            free map.values
+            map.values = newvalues
+            free map.states
+            map.states = newstates
+			map.tombs = 0
+			map.capacity = newcapacity
+        }
+         */
+        if let Type::Map(k, v) = t {
+            let hashfunction = self.hash(k);
+            let s = format!("rehash_{t}");
+            let llvmk = self.llvmtype(k);
+            let llvmv = self.llvmtype(v);
+            let fv = if let Some(fv) = self.module.get_function(&s) {
+                fv
+            } else {
+                let args = vec![self.llvmtype(t).into()];
+                let fv = self.module.add_function(
+                    &s,
+                    self.llvmfunctiontype(&Type::Unit, &args, false),
+                    None,
+                );
+                let call_block = self.builder.get_insert_block();
+                self.builder
+                    .position_at_end(self.context.append_basic_block(fv, "entry"));
+                
+                let map = fv.get_first_param().unwrap().into_pointer_value();
+                let oldcap = self
+                    .builder
+                    .build_load(
+                        self.builder
+                            .build_struct_gep(map, MAP_CAPACITY, "map.size")
+                            .unwrap(),
+                        "oldcapacity",
+                    )
+                    .into_int_value();
+                let mapstatesptr = self
+                    .builder
+                    .build_struct_gep(map, MAP_STATES, "map.states.ptr")
+                    .unwrap();
+                let mapstates = self
+                    .builder
+                    .build_load(mapstatesptr, "map.states")
+                    .into_pointer_value();
+
+                let mapkeysptr = self
+                    .builder
+                    .build_struct_gep(map, MAP_KEYS, "map.keys.ptr")
+                    .unwrap();
+                let mapkeys = self
+                    .builder
+                    .build_load(mapkeysptr, "map.keys")
+                    .into_pointer_value();
+
+                let mapvaluesptr = self
+                    .builder
+                    .build_struct_gep(map, MAP_VALUES, "map.values.ptr")
+                    .unwrap();
+                let mapvalues = self
+                    .builder
+                    .build_load(mapvaluesptr, "map.values")
+                    .into_pointer_value();
+
+                let newcap = self.builder.build_int_add(
+                    self.builder.build_int_mul(
+                        self.builder
+                            .build_load(
+                                self.builder
+                                    .build_struct_gep(map, MAP_SIZE, "map.size")
+                                    .unwrap(),
+                                "",
+                            )
+                            .into_int_value(),
+                        self.context.i64_type().const_int(2, false),
+                        "",
+                    ),
+                    self.context.i64_type().const_int(16, false),
+                    "",
+                );
+
+				self.emit_printf_call(&"REHASHING %d\n", &[newcap.into()]);
+
+                let newkeys = self
+                    .builder
+                    .build_array_malloc(llvmk, newcap, "newkeys")
+                    .unwrap();
+                let newvalues = self
+                    .builder
+                    .build_array_malloc(llvmv, newcap, "newvalues")
+                    .unwrap();
+                let newstates = self.emit_calloc(
+                    self.context.i64_type(),
+                    self.builder
+                        .build_int_cast(newcap, self.context.i32_type(), "")
+                        .into(),
+                );
+
+                let iptr = self.builder.build_alloca(self.context.i64_type(), "iptr");
+                let newiptr = self
+                    .builder
+                    .build_alloca(self.context.i64_type(), "newiptr");
+                self.builder
+                    .build_store(iptr, self.context.i64_type().const_zero());
+
+                let forinc = self.context.append_basic_block(fv, "forinc");
+                let forcond = self.context.append_basic_block(fv, "forcond");
+                let ifcond = self.context.append_basic_block(fv, "ifcond");
+                let ifbody = self.context.append_basic_block(fv, "ifbody");
+                let whilecond = self.context.append_basic_block(fv, "whilecond");
+                let whilebody = self.context.append_basic_block(fv, "whilebody");
+                let afterwhile = self.context.append_basic_block(fv, "afterwhile");
+                let afterif = self.context.append_basic_block(fv, "afterif");
+                let afterfor = self.context.append_basic_block(fv, "afterfor");
+
+                self.builder.build_unconditional_branch(forcond);
+                self.builder.position_at_end(forinc);
+                self.builder.build_store(
+                    iptr,
+                    self.builder.build_int_add(
+                        self.builder.build_load(iptr, "i").into_int_value(),
+                        self.context.i64_type().const_int(1, false),
+                        "iinc",
+                    ),
+                );
+                self.builder.build_unconditional_branch(forcond);
+                self.builder.position_at_end(forcond);
+                let ival = self.builder.build_load(iptr, "i").into_int_value();
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare(
+                        IntPredicate::ULT,
+                        ival,
+                        oldcap,
+                        "i_smaller_than_old_capacity",
+                    ),
+                    ifcond,
+                    afterfor,
+                );
+                self.builder.position_at_end(ifcond);
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        self.builder
+                            .build_load(
+                                unsafe { self.builder.build_gep(mapstates, &[ival], "") },
+                                "map.states_i",
+                            )
+                            .into_int_value(),
+                        self.context.i64_type().const_int(STATE_TAKEN, false),
+                        "is_state_taken",
+                    ),
+                    ifbody,
+                    afterif,
+                );
+                self.builder.position_at_end(ifbody);
+
+                let key = self.builder.build_load(
+                    unsafe { self.builder.build_gep(mapkeys, &[ival], "") },
+                    "key",
+                );
+                let value = self.builder.build_load(
+                    unsafe { self.builder.build_gep(mapvalues, &[ival], "") },
+                    "value",
+                );
+                self.builder.build_store(
+                    newiptr,
+                    self.builder.build_int_unsigned_rem(
+                        self.builder
+                            .build_call(hashfunction, &[key.into()], "hash")
+                            .try_as_basic_value()
+                            .unwrap_left()
+                            .into_int_value(),
+                        newcap,
+                        "newi",
+                    ),
+                );
+                self.builder.build_unconditional_branch(whilecond);
+                self.builder.position_at_end(whilecond);
+
+                let newival = self.builder.build_load(newiptr, "newival").into_int_value();
+
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        self.builder
+                            .build_load(
+                                unsafe { self.builder.build_gep(newstates, &[newival], "") },
+                                "newstates_i",
+                            )
+                            .into_int_value(),
+                        self.context.i64_type().const_int(STATE_TAKEN, false),
+                        "is_state_taken",
+                    ),
+                    whilebody,
+                    afterwhile,
+                );
+
+                self.builder.position_at_end(whilebody);
+                self.builder.build_store(
+                    newiptr,
+                    self.builder.build_int_add(
+                        newival,
+                        self.context.i64_type().const_int(1, false),
+                        "newiinc",
+                    ),
+                );
+                self.builder.build_unconditional_branch(afterwhile);
+
+                self.builder.position_at_end(afterwhile);
+				
+                self.builder.build_store(
+                    unsafe { self.builder.build_gep(newkeys, &[newival], "newkeys_i") },
+                    key,
+                );
+                self.builder.build_store(
+                    unsafe { self.builder.build_gep(newvalues, &[newival], "newvalues_i") },
+                    value,
+                );
+                self.builder.build_store(
+                    unsafe { self.builder.build_gep(newstates, &[newival], "newstates_i") },
+                    self.context.i64_type().const_int(STATE_TAKEN, false),
+                );
+                self.builder.build_unconditional_branch(afterif);
+                self.builder.position_at_end(afterif);
+                self.builder.build_unconditional_branch(forinc);
+                self.builder.position_at_end(afterfor);
+
+                self.builder.build_free(mapkeys);
+                self.builder.build_store(mapkeysptr, newkeys);
+
+                self.builder.build_free(mapvalues);
+                self.builder.build_store(mapvaluesptr, newvalues);
+
+                self.builder.build_free(mapstates);
+                self.builder.build_store(mapstatesptr, newstates);
+
+				self.builder.build_store(
+					self.builder
+						.build_struct_gep(map, MAP_TOMBS, "tombs")
+						.unwrap(),
+					self.context.i64_type().const_zero(),
+				);
+
+				self.builder.build_store(
+					self.builder
+						.build_struct_gep(map, MAP_CAPACITY, "capacity")
+						.unwrap(),
+					newcap,
+				);
+
+                self.builder.build_return(None);
+
+                if let Some(bb) = call_block {
+                    self.builder.position_at_end(bb);
+                }
+                fv
+            };
+            fv
+        } else {
+            panic!("needs to be map type")
+        }
     }
 
     fn emit_calloc<T>(&self, t: T, n: BasicMetadataValueEnum<'ctx>) -> PointerValue
