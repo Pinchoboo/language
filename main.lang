@@ -1,22 +1,3 @@
 fn int main() {
-	create <int,int> map
-	int a = 0
-	while a < 16 {
-		map.insert(a,1 + a * 2)
-		a = a + 1
-	} 
-	printInt(map.get(0))
 
-
-	println()
-	println()
-	printInt(map.capacity())
-	
-	println()
-	printInt(map.size())
-	println()
-	printInt(map.tombs())
-	println()
-	println()
-	return 0
 }
