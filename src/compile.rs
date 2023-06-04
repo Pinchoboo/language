@@ -1,20 +1,15 @@
 use std::{
-    any::Any, cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command,
-    rc::Rc,
+    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command, rc::Rc,
 };
 
 use inkwell::{
-    basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
-    types::{
-        BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType, StructType,
-        VoidType,
-    },
+    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{
-        AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue,
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue,
         PointerValue,
     },
     AddressSpace, IntPredicate, OptimizationLevel,
@@ -29,14 +24,14 @@ const PRINTF: &str = "printf";
 const MEMSET: &str = "memset";
 const CALLOC: &str = "calloc";
 
-pub struct Compiler<'ctx, 'a> {
+pub struct Compiler<'ctx, 'a, 'b> {
     pub context: &'ctx Context,
     pub builder: &'a Builder<'ctx>,
     pub module: &'a Module<'ctx>,
     pub vars: HashMap<i32, PointerValue<'ctx>>,
     strings: Rc<RefCell<HashMap<String, PointerValue<'ctx>>>>,
-    mapstructs: HashMap<Type, StructType<'ctx>>,
-    entrystructs: HashMap<Type, StructType<'ctx>>,
+    mapstructs: HashMap<Type<'b>, StructType<'ctx>>,
+    entrystructs: HashMap<Type<'b>, StructType<'ctx>>,
 }
 
 pub fn compile(program: Program) {
@@ -67,8 +62,8 @@ pub const STATE_FREE: u64 = 0;
 pub const STATE_TOMB: u64 = 1;
 pub const STATE_TAKEN: u64 = 2;
 
-impl<'ctx, 'a> Compiler<'ctx, 'a> {
-    fn mapstruct(&mut self, t: &Type) -> &StructType<'ctx> {
+impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
+    fn mapstruct(&mut self, t: &Type<'b>) -> &StructType<'ctx> {
         if let Type::Map(k, v) = t {
             let struct_name = format!("{t}");
             let capacity = self.context.i64_type();
@@ -99,7 +94,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         }
     }
 
-    fn llvmtype(&mut self, t: &Type) -> BasicTypeEnum<'ctx> {
+    fn llvmtype(&mut self, t: &Type<'b>) -> BasicTypeEnum<'ctx> {
         match t {
             Type::Int => self.context.i64_type().as_basic_type_enum(),
             Type::Float => self.context.f64_type().as_basic_type_enum(),
@@ -110,11 +105,12 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                 .mapstruct(t)
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum(),
+            Type::StructMap(_) => todo!(),
         }
     }
     fn llvmfunctiontype(
         &mut self,
-        t: &Type,
+        t: &Type<'b>,
         param_types: &[BasicMetadataTypeEnum<'ctx>],
         is_var_args: bool,
     ) -> FunctionType<'ctx> {
@@ -129,10 +125,11 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum()
                 .fn_type(param_types, is_var_args),
+            Type::StructMap(_) => todo!(),
         }
     }
 
-    pub fn compile(&mut self, program: Program) {
+    pub fn compile(&mut self, program: Program<'b>) {
         //add external functions
         {
             self.module.add_function(
@@ -320,7 +317,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         }
     }
 
-    fn emit_block(&mut self, body: &Block, fv: FunctionValue<'ctx>) {
+    fn emit_block(&mut self, body: &Block<'b>, fv: FunctionValue<'ctx>) {
         for s in &body.statements {
             self.emit_statement(s, fv, body.scopeinfo.clone());
         }
@@ -328,9 +325,9 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
 
     fn emit_statement(
         &mut self,
-        statement: &Statement,
+        statement: &Statement<'b>,
         fv: FunctionValue<'ctx>,
-        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
     ) {
         match &statement.statement {
             crate::parser::StatementType::Assignment(t, id, expr, Some(i)) => {
@@ -467,7 +464,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         };
     }
 
-    fn mapcreate(&mut self, maptype: &Type) -> FunctionValue {
+    fn mapcreate(&mut self, maptype: &Type<'b>) -> FunctionValue {
         if let Type::Map(k, v) = maptype {
             let fname = format!("create_{maptype}");
             if let Some(fv) = self.module.get_function(&fname) {
@@ -609,7 +606,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
     fn emit_expression(
         &mut self,
         expr: &Expression,
-        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
         fv: FunctionValue<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         match expr {
@@ -662,7 +659,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             "",
                         ))
                     }
-					(Type::Int, BinOp::Equal, Type::Int) => {
+                    (Type::Int, BinOp::Equal, Type::Int) => {
                         BasicValueEnum::IntValue(self.builder.build_int_compare(
                             inkwell::IntPredicate::EQ,
                             lv.into_int_value(),
@@ -687,7 +684,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
     fn emit_value(
         &mut self,
         val: &Value,
-        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
         fv: FunctionValue<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         match val {
@@ -727,7 +724,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         id: &&str,
         args: &[Expression],
         i: &i32,
-        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
         fv: FunctionValue<'ctx>,
     ) -> CallSiteValue<'ctx> {
         let args: Vec<_> = args
@@ -758,7 +755,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         id2: &&str,
         args: &[Expression],
         i: &i32,
-        scopeinfo: Rc<RefCell<ScopeInfo>>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
         fv: FunctionValue<'ctx>,
     ) -> BasicValueEnum<'ctx> {
         let args: Vec<BasicMetadataValueEnum<'ctx>> = args
@@ -1651,29 +1648,29 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
                             );
                             self.builder.position_at_end(ifbody);
                             let insertargs = if Type::Unit.ne(&v) {
-								let value = self.builder.build_load(
-									unsafe {
-										self.builder.build_gep(
-											self.builder
-												.build_load(
-													self.builder
-														.build_struct_gep(
-															fv.get_nth_param(MAP_PARAM)
-																.unwrap()
-																.into_pointer_value(),
-															MAP_VALUES,
-															&(id.to_string() + ".values.ptr"),
-														)
-														.unwrap(),
-													"values",
-												)
-												.into_pointer_value(),
-											&[self.builder.build_load(idx, "").into_int_value()],
-											"",
-										)
-									},
-									"",
-								);
+                                let value = self.builder.build_load(
+                                    unsafe {
+                                        self.builder.build_gep(
+                                            self.builder
+                                                .build_load(
+                                                    self.builder
+                                                        .build_struct_gep(
+                                                            fv.get_nth_param(MAP_PARAM)
+                                                                .unwrap()
+                                                                .into_pointer_value(),
+                                                            MAP_VALUES,
+                                                            &(id.to_string() + ".values.ptr"),
+                                                        )
+                                                        .unwrap(),
+                                                    "values",
+                                                )
+                                                .into_pointer_value(),
+                                            &[self.builder.build_load(idx, "").into_int_value()],
+                                            "",
+                                        )
+                                    },
+                                    "",
+                                );
                                 vec![returnval.into(), value.into()]
                             } else {
                                 vec![returnval.into()]
@@ -1714,7 +1711,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         }
     }
 
-    fn mapinsert(&mut self, maptype: &Type) -> FunctionValue {
+    fn mapinsert(&mut self, maptype: &Type<'b>) -> FunctionValue {
         let fname = format!("{}_insert", &maptype);
         if let Some(fv) = self.module.get_function(&fname) {
             fv
@@ -2082,7 +2079,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
         }
     }
 
-    fn hash(&mut self, t: &Type) -> FunctionValue<'ctx> {
+    fn hash(&mut self, t: &Type<'b>) -> FunctionValue<'ctx> {
         let s = format!("hash_{t}");
         let fv = if let Some(fv) = self.module.get_function(&s) {
             fv
@@ -2122,7 +2119,7 @@ impl<'ctx, 'a> Compiler<'ctx, 'a> {
     }
 
     //needs key type to not be unit type
-    fn rehash(&mut self, t: &Type) -> FunctionValue<'ctx> {
+    fn rehash(&mut self, t: &Type<'b>) -> FunctionValue<'ctx> {
         /*
         fn rehash(map) {
             newcapacity = map.size * 2 + 16

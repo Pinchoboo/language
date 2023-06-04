@@ -8,31 +8,33 @@ use std::{
 };
 
 use derivative::Derivative;
+use once_cell::sync::Lazy;
 use pest::{error::Error, iterators::Pair, pratt_parser::PrattParser, Parser, Span};
 
-use crate::typecheck::ScopeInfo;
+use crate::{functions, typecheck::ScopeInfo};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
 struct LanguageParser;
 
-lazy_static::lazy_static! {
-    static ref PRATT_PARSER: PrattParser<Rule> = {
-        use pest::pratt_parser::{Assoc::*, Op};
-        use Rule::*;
-        // Precedence is defined lowest to highest
-        PrattParser::new()
-            .op(Op::infix(or, Left))
-            .op(Op::infix(xor, Left))
-            .op(Op::infix(and, Left))
-            .op(Op::infix(equal, Left) | Op::infix(notEqual, Left))
-            .op(Op::infix(greater, Left) | Op::infix(greaterEqual, Left) | Op::infix(smaller, Left) | Op::infix(smallerEqual, Left))
-            //bit shift here
-            .op(Op::infix(add, Left) | Op::infix(subtract, Left))
-            .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left))
-            .op(Op::prefix(negate) | Op::prefix(invert))
-    };
-}
+static PRATT_PARSER: Lazy<PrattParser<Rule>> = Lazy::new(|| {
+    use pest::pratt_parser::{Assoc::*, Op};
+    use Rule::*;
+    // Precedence is defined lowest to highest
+    PrattParser::new()
+        .op(Op::infix(or, Left))
+        .op(Op::infix(xor, Left))
+        .op(Op::infix(and, Left))
+        .op(Op::infix(equal, Left) | Op::infix(notEqual, Left))
+        .op(Op::infix(greater, Left)
+            | Op::infix(greaterEqual, Left)
+            | Op::infix(smaller, Left)
+            | Op::infix(smallerEqual, Left))
+        //bit shift here
+        .op(Op::infix(add, Left) | Op::infix(subtract, Left))
+        .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left))
+        .op(Op::prefix(negate) | Op::prefix(invert))
+});
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Possition<'a> {
@@ -47,19 +49,30 @@ pub struct Program<'a> {
     pub pos: Possition<'a>,
     pub scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
     pub functions: Vec<Function<'a>>,
+    pub structs: Vec<StructMap<'a>>,
+}
+
+#[derive(Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
+pub struct StructMap<'a> {
+    #[derivative(Debug = "ignore")]
+    pub pos: Possition<'a>,
+    pub identifier: Identifier<'a>,
+    pub associations: Vec<(Identifier<'a>, Type<'a>)>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Type {
+pub enum Type<'a> {
     Int,
     Float,
     Bool,
     Char,
     Unit,
-    Map(Box<Type>, Box<Type>),
+    Map(Box<Type<'a>>, Box<Type<'a>>),
+    StructMap(Identifier<'a>),
 }
 
-impl Display for Type {
+impl<'a> Display for Type<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Int => f.write_str("int"),
@@ -76,13 +89,14 @@ impl Display for Type {
                 };
                 Ok(())
             }
+            Type::StructMap(_) => todo!(),
         }
     }
 }
 
-impl<'i> TryFrom<Pair<'i, Rule>> for Type {
+impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
     type Error = ();
-    fn try_from(value: Pair<Rule>) -> Result<Self, Self::Error> {
+    fn try_from(value: Pair<'i, Rule>) -> Result<Self, Self::Error> {
         if value.as_rule() == Rule::r#type {
             let inner = value.into_inner().next().ok_or(())?;
             match inner.as_rule() {
@@ -112,7 +126,7 @@ pub struct Function<'a> {
     #[derivative(Debug = "ignore")]
     pub pos: Possition<'a>,
     pub identifier: Identifier<'a>,
-    pub return_type: Type,
+    pub return_type: Type<'a>,
     pub arguments: Vec<Argument<'a>>,
     pub body: Block<'a>,
 }
@@ -125,7 +139,7 @@ pub struct Block<'a> {
 }
 
 pub type ConditionalBlock<'a> = (Expression<'a>, Block<'a>);
-pub type Argument<'a> = (Type, Identifier<'a>);
+pub type Argument<'a> = (Type<'a>, Identifier<'a>);
 
 #[derive(Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
@@ -139,10 +153,15 @@ pub struct Statement<'a> {
 pub enum StatementType<'a> {
     If(ConditionalBlock<'a>, Vec<ConditionalBlock<'a>>, Block<'a>),
     While(ConditionalBlock<'a>),
-    Assignment(Option<Type>, Identifier<'a>, Expression<'a>, Option<i32>),
+    Assignment(
+        Option<Type<'a>>,
+        Identifier<'a>,
+        Expression<'a>,
+        Option<i32>,
+    ),
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Return(Expression<'a>),
-    Creation(Type, Identifier<'a>, Option<i32>),
+    Creation(Type<'a>, Identifier<'a>, Option<i32>),
     Free(Identifier<'a>, Option<i32>),
     MapCall(
         Identifier<'a>,
@@ -158,10 +177,10 @@ pub enum Expression<'a> {
         Box<Expression<'a>>,
         BinOp,
         Box<Expression<'a>>,
-        Option<Type>,
+        Option<Type<'a>>,
     ),
-    Unary(UnOp, Box<Expression<'a>>, Option<Type>),
-    Value(Value<'a>, Option<Type>),
+    Unary(UnOp, Box<Expression<'a>>, Option<Type<'a>>),
+    Value(Value<'a>, Option<Type<'a>>),
 }
 
 impl<'a> Expression<'a> {
@@ -182,7 +201,12 @@ pub enum Value<'a> {
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Identifier(Identifier<'a>, Option<i32>),
     Char(char),
-    MapCall(Identifier<'a>, Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
+    MapCall(
+        Identifier<'a>,
+        Identifier<'a>,
+        Vec<Expression<'a>>,
+        Option<i32>,
+    ),
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BinOp {
@@ -270,15 +294,29 @@ impl<'a> FileParser {
             .map_err(FileParserError::PestParse)?
             .next()
             .unwrap();
+
+        let mut functions = vec![];
+        let mut structs = vec![];
+        for p in pest_program.clone().into_inner() {
+            match p.as_rule() {
+                Rule::structdef => structs.push(self.parse_structdef(p)),
+                Rule::function => {
+                    functions.push(self.parse_function(p));
+                }
+                _ => {
+                    panic!("unreachable")
+                }
+            }
+        }
+        println!("{:?}", structs);
+
         Ok(Program {
             pos: Possition {
                 filename: &self.path,
                 span: pest_program.as_span(),
             },
-            functions: pest_program
-                .into_inner()
-                .map(|p| self.parse_function(p))
-                .collect(),
+            functions,
+            structs,
             scopeinfo: Rc::new(RefCell::new(ScopeInfo::default())),
         })
     }
@@ -595,17 +633,33 @@ impl<'a> FileParser {
             }
             Rule::char => Value::Char(pair.as_str().chars().nth(1).unwrap()),
             Rule::mapCall => {
-				let mut inner = pair.into_inner();
-				Value::MapCall(
-                inner.next().expect("identifier").as_str(),
-                {
-                    inner = inner.next().unwrap().into_inner();
-                    inner.next().expect("identifier").as_str()
-                },
-                inner.map(|e| self.parse_expression(e)).collect(),
-                None,
-            )},
+                let mut inner = pair.into_inner();
+                Value::MapCall(
+                    inner.next().expect("identifier").as_str(),
+                    {
+                        inner = inner.next().unwrap().into_inner();
+                        inner.next().expect("identifier").as_str()
+                    },
+                    inner.map(|e| self.parse_expression(e)).collect(),
+                    None,
+                )
+            }
             _ => panic!("unreachable"),
+        }
+    }
+
+    fn parse_structdef(&'a self, p: Pair<'a, Rule>) -> StructMap {
+        let mut inner = p.clone().into_inner();
+        StructMap {
+            pos: Possition {
+                filename: &self.path,
+                span: p.as_span(),
+            },
+            identifier: { inner.next().unwrap().as_str() },
+            associations: {
+                println!("{:?}", inner.next().unwrap());
+                todo!()
+            },
         }
     }
 }

@@ -10,5 +10,5 @@ fn main() {
 	printChar('r')
 	printChar('l')
 	printChar('d')
-	println()
+	printLn()
 }

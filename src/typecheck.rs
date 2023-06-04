@@ -10,44 +10,42 @@ use crate::{
     functions::{self, PREDEFINED_FUNCTIONS},
     parser::{BinOp, Block, Expression, Identifier, Program, Type, UnOp, Value},
 };
+use once_cell::sync::Lazy;
 
-lazy_static::lazy_static! {
-    static ref UNARY_TABLE: HashMap<(UnOp, Type), Type> = {
-        let mut m = HashMap::new();
-        m.insert((UnOp::Invert, Type::Bool), Type::Bool);
-        m.insert((UnOp::Invert, Type::Int), Type::Int);
-        m.insert((UnOp::Negate, Type::Int), Type::Int);
-        m
-    };
-    static ref BINARY_TABLE: HashMap<(Type, BinOp, Type), Type> = {
-        let mut m = HashMap::new();
-        m.insert((Type::Bool, BinOp::And, Type::Bool), Type::Bool);
-        m.insert((Type::Bool, BinOp::Or, Type::Bool), Type::Bool);
-        m.insert((Type::Bool, BinOp::Xor, Type::Bool), Type::Bool);
-        m.insert((Type::Bool, BinOp::Equal, Type::Bool), Type::Bool);
-        m.insert((Type::Bool, BinOp::NotEqual, Type::Bool), Type::Bool);
+static UNARY_TABLE: Lazy<HashMap<(UnOp, Type), Type>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    m.insert((UnOp::Invert, Type::Bool), Type::Bool);
+    m.insert((UnOp::Invert, Type::Int), Type::Int);
+    m.insert((UnOp::Negate, Type::Int), Type::Int);
+    m
+});
+static BINARY_TABLE: Lazy<HashMap<(Type, BinOp, Type), Type>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    m.insert((Type::Bool, BinOp::And, Type::Bool), Type::Bool);
+    m.insert((Type::Bool, BinOp::Or, Type::Bool), Type::Bool);
+    m.insert((Type::Bool, BinOp::Xor, Type::Bool), Type::Bool);
+    m.insert((Type::Bool, BinOp::Equal, Type::Bool), Type::Bool);
+    m.insert((Type::Bool, BinOp::NotEqual, Type::Bool), Type::Bool);
 
-        m.insert((Type::Int, BinOp::Add, Type::Int), Type::Int);
-        m.insert((Type::Int, BinOp::And, Type::Int), Type::Int);
-        m.insert((Type::Int, BinOp::Divide, Type::Int), Type::Int);
-        m.insert((Type::Int, BinOp::Modulo, Type::Int), Type::Int);
-        m.insert((Type::Int, BinOp::Multiply, Type::Int), Type::Int);
-        m.insert((Type::Int, BinOp::Or, Type::Int), Type::Int);
-        m.insert((Type::Int, BinOp::Subtract, Type::Int), Type::Int);
-        m.insert((Type::Int, BinOp::Xor, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::Add, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::And, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::Divide, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::Modulo, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::Multiply, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::Or, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::Subtract, Type::Int), Type::Int);
+    m.insert((Type::Int, BinOp::Xor, Type::Int), Type::Int);
 
-        m.insert((Type::Int, BinOp::Equal, Type::Int), Type::Bool);
-        m.insert((Type::Int, BinOp::NotEqual, Type::Int), Type::Bool);
-        m.insert((Type::Int, BinOp::Greater, Type::Int), Type::Bool);
-        m.insert((Type::Int, BinOp::GreaterEqual, Type::Int), Type::Bool);
-        m.insert((Type::Int, BinOp::Smaller, Type::Int), Type::Bool);
-        m.insert((Type::Int, BinOp::SmallerEqual, Type::Int), Type::Bool);
+    m.insert((Type::Int, BinOp::Equal, Type::Int), Type::Bool);
+    m.insert((Type::Int, BinOp::NotEqual, Type::Int), Type::Bool);
+    m.insert((Type::Int, BinOp::Greater, Type::Int), Type::Bool);
+    m.insert((Type::Int, BinOp::GreaterEqual, Type::Int), Type::Bool);
+    m.insert((Type::Int, BinOp::Smaller, Type::Int), Type::Bool);
+    m.insert((Type::Int, BinOp::SmallerEqual, Type::Int), Type::Bool);
 
-
-        //todo chars and floats
-        m
-    };
-}
+    //todo chars and floats
+    m
+});
 
 pub struct TypeCheckContext<'a> {
     next_id: i32,
@@ -57,8 +55,8 @@ pub struct TypeCheckContext<'a> {
 #[derive(Derivative, PartialEq, Eq, Default)]
 #[derivative(Debug)]
 pub struct ScopeInfo<'a> {
-    pub variables: Vec<(Identifier<'a>, Type, i32, Option<i32>)>,
-    pub functions: Vec<(Identifier<'a>, Vec<Type>, Type, i32)>,
+    pub variables: Vec<(Identifier<'a>, Type<'a>, i32, Option<i32>)>,
+    pub functions: Vec<(Identifier<'a>, Vec<Type<'a>>, Type<'a>, i32)>,
     #[derivative(Debug = "ignore")]
     pub previous: Option<Rc<RefCell<ScopeInfo<'a>>>>,
 }
@@ -120,7 +118,7 @@ impl<'a> TypeCheckContext<'a> {
     fn check_block(
         &mut self,
         block: &mut Block<'a>,
-        returntype: &Option<Type>,
+        returntype: &Option<Type<'a>>,
         previous_scope: Rc<RefCell<ScopeInfo<'a>>>,
     ) -> bool {
         block.scopeinfo.borrow_mut().previous = Some(previous_scope);
@@ -279,7 +277,7 @@ impl<'a> TypeCheckContext<'a> {
         &mut self,
         expr: &mut Expression<'a>,
         scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
-    ) -> Type {
+    ) -> Type<'a> {
         match expr {
             Expression::Binary(l, op, r, t) => {
                 let k = (
@@ -312,7 +310,7 @@ impl<'a> TypeCheckContext<'a> {
         &mut self,
         value: &mut Value<'a>,
         scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
-    ) -> Type {
+    ) -> Type<'a> {
         match value {
             Value::Number(_) => Type::Int,
             Value::Bool(_) => Type::Bool,
@@ -349,8 +347,7 @@ impl<'a> TypeCheckContext<'a> {
                 }
             }
             Value::MapCall(id, id2, exprs, o) => {
-                if let Some((_, Type::Map(k, v), n, _)) = find_variable(id, scopeinfo.clone())
-                {
+                if let Some((_, Type::Map(k, v), n, _)) = find_variable(id, scopeinfo.clone()) {
                     *o = Some(n);
                     match functions::valid_map_function(
                         *k,
@@ -375,7 +372,7 @@ impl<'a> TypeCheckContext<'a> {
 pub fn find_variable<'a>(
     id: Identifier<'_>,
     si: Rc<RefCell<ScopeInfo<'a>>>,
-) -> Option<(&'a str, Type, i32, Option<i32>)> {
+) -> Option<(&'a str, Type<'a>, i32, Option<i32>)> {
     let mut si = Some(si);
     while let Some(s) = si.clone() {
         if let Some(v) = s
@@ -394,7 +391,7 @@ pub fn find_variable<'a>(
 pub fn find_function<'a>(
     id: Identifier<'_>,
     si: Rc<RefCell<ScopeInfo<'a>>>,
-) -> Option<(&'a str, Vec<Type>, Type, i32)> {
+) -> Option<(&'a str, Vec<Type<'a>>, Type<'a>, i32)> {
     let mut si = Some(si);
     while let Some(s) = si.clone() {
         if let Some(v) = s

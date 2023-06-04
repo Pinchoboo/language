@@ -13,7 +13,7 @@ boolean = { true | false }
 true    = { "true" }
 false   = { "false" }
 
-type      = { intType | floatType | boolType | charType | unitType | mapType /*| structmapType*/ }
+type      = { intType | floatType | boolType | charType | unitType | mapType | structmapType }
 
 intType   = { "int" }
 floatType = { "float" }
@@ -118,6 +118,9 @@ block = {
     (if | while | assignment | creation | free | mapCall | call)* ~ return?
 }
 
+keyTypePair = {identifier ~ "->" ~ type}
+structdef = {"<" ~ identifier ~ ">" ~ "{" ~ keyTypePair* ~ "}"}
+
 program = {
-    SOI ~ function* ~ (&EOI ~ ANY*)
+    SOI ~ (function | structdef)* ~ (&EOI ~ ANY*)
 }

@@ -1,4 +1,5 @@
 use crate::parser::Type;
+use once_cell::sync::Lazy;
 
 pub const PRINT_INT: &str = "printInt";
 pub const PRINT_BOOL: &str = "printBool";
@@ -14,18 +15,22 @@ pub const GET_MAYBE: &str = "getMaybe";
 pub const INSERT: &str = "insert";
 pub const REMOVE: &str = "remove";
 
-lazy_static::lazy_static! {
-    pub static ref PREDEFINED_FUNCTIONS: Vec<(&'static str, Vec<Type>, Type)> = {
+pub static PREDEFINED_FUNCTIONS: Lazy<Vec<(&'static str, Vec<Type<'static>>, Type<'static>)>> =
+    Lazy::new(|| {
         vec![
-            (PRINT_INT,vec![Type::Int],Type::Unit),
-            (PRINT_BOOL,vec![Type::Bool],Type::Unit),
-            (PRINT_LN,vec![],Type::Unit),
-            (PRINT_CHAR,vec![Type::Char],Type::Unit),
+            (PRINT_INT, vec![Type::Int], Type::Unit),
+            (PRINT_BOOL, vec![Type::Bool], Type::Unit),
+            (PRINT_LN, vec![], Type::Unit),
+            (PRINT_CHAR, vec![Type::Char], Type::Unit),
         ]
-    };
-}
+    });
 
-pub fn valid_map_function(k: Type, v: Type, args: &Vec<Type>, id: &str) -> Result<Type, String> {
+pub fn valid_map_function<'a>(
+    k: Type<'a>,
+    v: Type<'a>,
+    args: &Vec<Type>,
+    id: &str,
+) -> Result<Type<'a>, String> {
     let correctargs = get_map_args(&k, &v, id)?.eq(args);
     match id {
         SIZE | CAPACITY | TOMBS | CLEAR => {
@@ -67,7 +72,11 @@ pub fn valid_map_function(k: Type, v: Type, args: &Vec<Type>, id: &str) -> Resul
     }
 }
 
-pub fn get_map_args(k: &Type, v: &Type, id: &str) -> Result<Vec<Type>, String> {
+pub fn get_map_args<'a, 'b>(
+    k: &'b Type<'a>,
+    v: &'b Type<'a>,
+    id: &'b str,
+) -> Result<Vec<Type<'a>>, String> {
     let k = k.clone();
     let v = v.clone();
     match id {
