@@ -1,8 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+
 
 use crate::{
     parser::Type,
-    typecheck::{find_structmaptype, ScopeInfo},
 };
 use once_cell::sync::Lazy;
 

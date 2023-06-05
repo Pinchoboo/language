@@ -327,7 +327,7 @@ impl<'a> TypeCheckContext<'a> {
         &mut self,
         expr: &mut Expression<'a>,
         scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
-        msc: Option<&'a str>,
+        _msc: Option<&'a str>,
     ) -> Type<'a> {
         match expr {
             Expression::Binary(l, op, r, t) => {

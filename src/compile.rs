@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, collections::HashMap, iter::once_with, option, path::Path, process::Command,
+    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command,
     rc::Rc,
 };
 
@@ -1803,7 +1803,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         } else if let Some((_, Type::StructMap(maptype), i, _)) = var {
             let smt = typecheck::find_structmaptype(maptype, scopeinfo.clone()).expect("exists");
             let maptype = Type::StructMap(maptype);
-            let llvmmaptype = self.llvmtype(&maptype, scopeinfo.clone());
+            let _llvmmaptype = self.llvmtype(&maptype, scopeinfo.clone());
             let mapptr = *self.vars.get(&i).unwrap();
             let map = self.builder.build_load(mapptr, id).into_pointer_value();
             let mut allargs: Vec<BasicMetadataValueEnum<'ctx>> = vec![map.into()];
