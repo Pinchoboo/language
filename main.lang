@@ -10,6 +10,16 @@
     B -> int
 }
 
+<Node> {
+	NEXT -> <Node>
+	VALUE -> int 
+}
+
 fn int main() {
+	return 0
+}
+
+fn int test(<Shape> s, <Node> n) {
+	<Shape> ns = s
 	return 0
 }

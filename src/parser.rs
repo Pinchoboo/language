@@ -11,7 +11,7 @@ use derivative::Derivative;
 use once_cell::sync::Lazy;
 use pest::{error::Error, iterators::Pair, pratt_parser::PrattParser, Parser, Span};
 
-use crate::{functions, typecheck::ScopeInfo};
+use crate::typecheck::ScopeInfo;
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -49,7 +49,7 @@ pub struct Program<'a> {
     pub pos: Possition<'a>,
     pub scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
     pub functions: Vec<Function<'a>>,
-    pub structs: Vec<StructMap<'a>>,
+    pub structmaps: Vec<StructMap<'a>>,
 }
 
 #[derive(Derivative, PartialEq, Eq)]
@@ -89,7 +89,13 @@ impl<'a> Display for Type<'a> {
                 };
                 Ok(())
             }
-            Type::StructMap(_) => todo!(),
+            Type::StructMap(s) => {
+                {
+                    f.write_str("mapstruct_")?;
+                    std::fmt::Display::fmt(&s, f)?
+                };
+                Ok(())
+            },
         }
     }
 }
@@ -112,6 +118,9 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
                         Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
                     ))
                 }
+				Rule::structmapType => {
+					Ok(Type::StructMap(inner.into_inner().next().unwrap().as_str()))
+				}
                 _ => Err(()),
             }
         } else {
@@ -316,7 +325,7 @@ impl<'a> FileParser {
                 span: pest_program.as_span(),
             },
             functions,
-            structs,
+            structmaps: structs,
             scopeinfo: Rc::new(RefCell::new(ScopeInfo::default())),
         })
     }
@@ -656,10 +665,14 @@ impl<'a> FileParser {
                 span: p.as_span(),
             },
             identifier: { inner.next().unwrap().as_str() },
-            associations: {
-                println!("{:?}", inner.next().unwrap());
-                todo!()
-            },
+            associations: { inner.map(|p| self.parse_association(p)).collect() },
         }
+    }
+    fn parse_association(&'a self, p: Pair<'a, Rule>) -> (Identifier<'a>, Type<'a>) {
+        let mut innner = p.into_inner();
+        (
+            innner.next().unwrap().as_str(),
+            innner.next().unwrap().try_into().unwrap(),
+        )
     }
 }

@@ -57,6 +57,7 @@ pub struct TypeCheckContext<'a> {
 pub struct ScopeInfo<'a> {
     pub variables: Vec<(Identifier<'a>, Type<'a>, i32, Option<i32>)>,
     pub functions: Vec<(Identifier<'a>, Vec<Type<'a>>, Type<'a>, i32)>,
+	pub structmaptypes: Vec<(Identifier<'a>, Vec<(Identifier<'a>, Type<'a>)>, i32)>,
     #[derivative(Debug = "ignore")]
     pub previous: Option<Rc<RefCell<ScopeInfo<'a>>>>,
 }
@@ -96,10 +97,18 @@ pub fn typecheck(ast: &mut Program) {
             id,
         ));
     });
+	//add struct map types
+	for sm in &ast.structmaps {
+		tcc.root.borrow_mut().structmaptypes.push((sm.identifier,sm.associations.clone(),tcc.next_id));
+		tcc.next_id+=1;
+	}
 
     //check blocks
     ast.functions.iter_mut().for_each(|f| {
         for (i, arg) in f.arguments.iter().enumerate() {
+			if let Type::StructMap(id) = arg.0 {
+				find_structmaptype(id, tcc.root.clone()).unwrap_or_else(|| panic!("map type {id} not defined"));
+			}
             f.body.scopeinfo.borrow_mut().variables.push((
                 arg.1,
                 arg.0.clone(),
@@ -152,7 +161,11 @@ impl<'a> TypeCheckContext<'a> {
                     self.check_block(whileblock, returntype, block.scopeinfo.clone());
                 }
                 crate::parser::StatementType::Assignment(t, id, expr, o) => {
-                    if self.check_expression(expr, block.scopeinfo.clone())
+                    if let Some(Type::StructMap(id)) = t {
+						find_structmaptype(id, block.scopeinfo.clone()).unwrap_or_else(|| panic!("map type {id} not defined"));
+					}
+					
+					if self.check_expression(expr, block.scopeinfo.clone())
                         != if t.is_none() {
                             //if updating a value
                             //todo maybe give new numeric id
@@ -380,6 +393,25 @@ pub fn find_variable<'a>(
             .variables
             .iter()
             .find(|(vid, _, _, _)| vid.eq(&id))
+        {
+            return Some(v.clone());
+        }
+        si = s.borrow().previous.clone();
+    }
+    None
+}
+
+pub fn find_structmaptype<'a>(
+    id: Identifier<'_>,
+    si: Rc<RefCell<ScopeInfo<'a>>>,
+) -> Option<(&'a str, Vec<(Identifier<'a>,Type<'a>)>, i32)> {
+    let mut si = Some(si);
+    while let Some(s) = si.clone() {
+        if let Some(v) = s
+            .borrow()
+            .structmaptypes
+            .iter()
+            .find(|(vid, _, _)| vid.eq(&id))
         {
             return Some(v.clone());
         }

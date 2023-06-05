@@ -29,7 +29,7 @@ whileKeyword    = _{ "while" }
 ifKeyword       = _{ "if" }
 elseKeyword     = _{ "else" }
 returnKeyword   = _{ "return" }
-createKeyword   = _{ "create" }
+createKeyword   = _{ "new" }
 freeKeyword 	= _{ "free" }
 
 identifier = @{
