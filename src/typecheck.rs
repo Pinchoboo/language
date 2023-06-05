@@ -57,7 +57,7 @@ pub struct TypeCheckContext<'a> {
 pub struct ScopeInfo<'a> {
     pub variables: Vec<(Identifier<'a>, Type<'a>, i32, Option<i32>)>,
     pub functions: Vec<(Identifier<'a>, Vec<Type<'a>>, Type<'a>, i32)>,
-	pub structmaptypes: Vec<(Identifier<'a>, Vec<(Identifier<'a>, Type<'a>)>, i32)>,
+    pub structmaptypes: Vec<(Identifier<'a>, Vec<(Identifier<'a>, Type<'a>)>, i32)>,
     #[derivative(Debug = "ignore")]
     pub previous: Option<Rc<RefCell<ScopeInfo<'a>>>>,
 }
@@ -97,18 +97,23 @@ pub fn typecheck(ast: &mut Program) {
             id,
         ));
     });
-	//add struct map types
-	for sm in &ast.structmaps {
-		tcc.root.borrow_mut().structmaptypes.push((sm.identifier,sm.associations.clone(),tcc.next_id));
-		tcc.next_id+=1;
-	}
+    //add struct map types
+    for sm in &ast.structmaps {
+        tcc.root.borrow_mut().structmaptypes.push((
+            sm.identifier,
+            sm.associations.clone(),
+            tcc.next_id,
+        ));
+        tcc.next_id += 1;
+    }
 
     //check blocks
     ast.functions.iter_mut().for_each(|f| {
         for (i, arg) in f.arguments.iter().enumerate() {
-			if let Type::StructMap(id) = arg.0 {
-				find_structmaptype(id, tcc.root.clone()).unwrap_or_else(|| panic!("map type {id} not defined"));
-			}
+            if let Type::StructMap(id) = arg.0 {
+                find_structmaptype(id, tcc.root.clone())
+                    .unwrap_or_else(|| panic!("map type {id} not defined"));
+            }
             f.body.scopeinfo.borrow_mut().variables.push((
                 arg.1,
                 arg.0.clone(),
@@ -135,17 +140,20 @@ impl<'a> TypeCheckContext<'a> {
         //check for duplicate variables identifiers
         //check types
         //check for return statements
+		
         let mut hasreturned = false;
         block.statements.iter_mut().for_each(|s| {
             match &mut s.statement {
                 crate::parser::StatementType::If((ifexpr, ifblock), ifelse, elseblock) => {
                     let mut willreturn = true;
-                    if self.check_expression(ifexpr, block.scopeinfo.clone()) != Type::Bool {
+                    if self.check_expression(ifexpr, block.scopeinfo.clone(), None) != Type::Bool {
                         panic!("if statement needs a bool")
                     }
                     willreturn &= self.check_block(ifblock, returntype, block.scopeinfo.clone());
                     for (ieexpr, ieblock) in ifelse {
-                        if self.check_expression(ieexpr, block.scopeinfo.clone()) != Type::Bool {
+                        if self.check_expression(ieexpr, block.scopeinfo.clone(), None)
+                            != Type::Bool
+                        {
                             panic!()
                         }
                         willreturn &=
@@ -155,17 +163,19 @@ impl<'a> TypeCheckContext<'a> {
                     hasreturned |= willreturn;
                 }
                 crate::parser::StatementType::While((whileexpr, whileblock)) => {
-                    if self.check_expression(whileexpr, block.scopeinfo.clone()) != Type::Bool {
+                    if self.check_expression(whileexpr, block.scopeinfo.clone(), None) != Type::Bool
+                    {
                         panic!()
                     }
                     self.check_block(whileblock, returntype, block.scopeinfo.clone());
                 }
                 crate::parser::StatementType::Assignment(t, id, expr, o) => {
                     if let Some(Type::StructMap(id)) = t {
-						find_structmaptype(id, block.scopeinfo.clone()).unwrap_or_else(|| panic!("map type {id} not defined"));
-					}
-					
-					if self.check_expression(expr, block.scopeinfo.clone())
+                        find_structmaptype(id, block.scopeinfo.clone())
+                            .unwrap_or_else(|| panic!("map type {id} not defined"));
+                    }
+
+                    if self.check_expression(expr, block.scopeinfo.clone(), None)
                         != if t.is_none() {
                             //if updating a value
                             //todo maybe give new numeric id
@@ -204,7 +214,7 @@ impl<'a> TypeCheckContext<'a> {
                     if let Some(v) = find_function(id, block.scopeinfo.clone()) {
                         if exprs.len() != v.1.len()
                             || !exprs.iter_mut().zip(v.1.iter()).all(|t| {
-                                self.check_expression(t.0, block.scopeinfo.clone()) == *t.1
+                                self.check_expression(t.0, block.scopeinfo.clone(), None) == *t.1
                             })
                         {
                             panic!(
@@ -212,7 +222,11 @@ impl<'a> TypeCheckContext<'a> {
                                 v.1,
                                 exprs
                                     .iter_mut()
-                                    .map(|e| self.check_expression(e, block.scopeinfo.clone()))
+                                    .map(|e| self.check_expression(
+                                        e,
+                                        block.scopeinfo.clone(),
+                                        None
+                                    ))
                                     .collect::<Vec<_>>()
                             );
                         }
@@ -222,20 +236,43 @@ impl<'a> TypeCheckContext<'a> {
                     }
                 }
                 crate::parser::StatementType::MapCall(id, id2, exprs, o) => {
-                    if let Some((_, Type::Map(k, v), n, _)) =
-                        find_variable(id, block.scopeinfo.clone())
-                    {
+					let fv = find_variable(id, block.scopeinfo.clone());
+                    if let Some((_, Type::Map(k, v), n, _)) = fv {
                         *o = Some(n);
                         if let Err(e) = functions::valid_map_function(
                             *k,
                             *v,
                             &exprs
                                 .iter_mut()
-                                .map(|e| self.check_expression(e, block.scopeinfo.clone()))
+                                .map(|e| self.check_expression(e, block.scopeinfo.clone(), None))
                                 .collect(),
                             id2,
                         ) {
                             panic!("{e}");
+                        }
+                    } else if let Some((_, Type::StructMap(msc), n, _)) = fv {
+						
+                        if let Some(r) = find_structmaptype(msc, block.scopeinfo.clone()) {
+                            *o = Some(n);
+                            if let Err(e) = functions::valid_map_struct_function(
+                                id2,
+                                exprs
+                                    .iter_mut()
+                                    .map(|e| {
+                                        if let Expression::Value(Value::Identifier(id, _), _) = e {
+                                            if let Some((_, t)) = r.1.iter().find(|(s, _)| s.eq(id))
+                                            {
+                                                return Err(t.clone());
+                                            }
+                                        }
+                                        Ok(self.check_expression(e, block.scopeinfo.clone(), None))
+                                    })
+                                    .collect(),
+                            ) {
+                                panic!("{e}");
+                            }
+                        } else {
+                            panic!("could not find map type {msc}");
                         }
                     } else {
                         panic!("could not find map {id}")
@@ -243,7 +280,7 @@ impl<'a> TypeCheckContext<'a> {
                 }
                 crate::parser::StatementType::Return(expr) => {
                     if let Some(rt) = returntype {
-                        if self.check_expression(expr, block.scopeinfo.clone()) != *rt {
+                        if self.check_expression(expr, block.scopeinfo.clone(), None) != *rt {
                             panic!("does not return correct type")
                         }
                         hasreturned = true;
@@ -290,13 +327,14 @@ impl<'a> TypeCheckContext<'a> {
         &mut self,
         expr: &mut Expression<'a>,
         scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
+        msc: Option<&'a str>,
     ) -> Type<'a> {
         match expr {
             Expression::Binary(l, op, r, t) => {
                 let k = (
-                    self.check_expression(l, scopeinfo.clone()),
+                    self.check_expression(l, scopeinfo.clone(), None),
                     *op,
-                    self.check_expression(r, scopeinfo),
+                    self.check_expression(r, scopeinfo, None),
                 );
                 *t = BINARY_TABLE.get(&k).cloned();
                 if let Some(t) = t {
@@ -305,7 +343,7 @@ impl<'a> TypeCheckContext<'a> {
                 panic!("invalid binary")
             }
             Expression::Unary(op, e, t) => {
-                let k = (*op, self.check_expression(e, scopeinfo));
+                let k = (*op, self.check_expression(e, scopeinfo, None));
                 *t = UNARY_TABLE.get(&k).cloned();
                 if let Some(t) = t {
                     return t.clone();
@@ -334,14 +372,14 @@ impl<'a> TypeCheckContext<'a> {
                         || !exprs
                             .iter_mut()
                             .zip(f.1.iter())
-                            .all(|t| self.check_expression(t.0, scopeinfo.clone()) == *t.1)
+                            .all(|t| self.check_expression(t.0, scopeinfo.clone(), None) == *t.1)
                     {
                         panic!(
                             "arguments dont match, function {id} needs {:?} but {:?} is given",
                             f.1,
                             exprs
                                 .iter_mut()
-                                .map(|e| self.check_expression(e, scopeinfo.clone()))
+                                .map(|e| self.check_expression(e, scopeinfo.clone(), None))
                                 .collect::<Vec<_>>()
                         );
                     }
@@ -352,7 +390,7 @@ impl<'a> TypeCheckContext<'a> {
                 }
             }
             Value::Identifier(id, o) => {
-                if let Some(v) = find_variable(id, scopeinfo) {
+                if let Some(v) = find_variable(id, scopeinfo.clone()) {
                     *o = Some(v.2);
                     v.1
                 } else {
@@ -360,19 +398,43 @@ impl<'a> TypeCheckContext<'a> {
                 }
             }
             Value::MapCall(id, id2, exprs, o) => {
-                if let Some((_, Type::Map(k, v), n, _)) = find_variable(id, scopeinfo.clone()) {
+                let fv = find_variable(id, scopeinfo.clone());
+                if let Some((_, Type::Map(k, v), n, _)) = fv {
                     *o = Some(n);
                     match functions::valid_map_function(
                         *k,
                         *v,
                         &exprs
                             .iter_mut()
-                            .map(|e| self.check_expression(e, scopeinfo.clone()))
+                            .map(|e| self.check_expression(e, scopeinfo.clone(), None))
                             .collect(),
                         id2,
                     ) {
                         Ok(t) => t,
                         Err(e) => panic!("{e}"),
+                    }
+                } else if let Some((_, Type::StructMap(id3), n, _)) = fv {
+                    if let Some(r) = find_structmaptype(id3, scopeinfo.clone()) {
+                        *o = Some(n);
+                        match functions::valid_map_struct_function(
+                            id2,
+                            exprs
+                                .iter_mut()
+                                .map(|e| {
+                                    if let Expression::Value(Value::Identifier(key, _), _) = &e {
+                                        if let Some((_, t)) = r.1.iter().find(|(s, _)| {key.eq(s)}) {
+                                            return Err(t.clone());
+                                        }
+                                    }
+                                    Ok(self.check_expression(e, scopeinfo.clone(), None))
+                                })
+                                .collect(),
+                        ) {
+                            Ok(t) => t,
+                            Err(e) => panic!("{e}"),
+                        }
+                    } else {
+                        panic!("could not find map type {id3}");
                     }
                 } else {
                     panic!("could not find map {id}")
@@ -404,7 +466,7 @@ pub fn find_variable<'a>(
 pub fn find_structmaptype<'a>(
     id: Identifier<'_>,
     si: Rc<RefCell<ScopeInfo<'a>>>,
-) -> Option<(&'a str, Vec<(Identifier<'a>,Type<'a>)>, i32)> {
+) -> Option<(&'a str, Vec<(Identifier<'a>, Type<'a>)>, i32)> {
     let mut si = Some(si);
     while let Some(s) = si.clone() {
         if let Some(v) = s

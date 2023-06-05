@@ -1,4 +1,9 @@
-use crate::parser::Type;
+use std::{cell::RefCell, rc::Rc};
+
+use crate::{
+    parser::Type,
+    typecheck::{find_structmaptype, ScopeInfo},
+};
 use once_cell::sync::Lazy;
 
 pub const PRINT_INT: &str = "printInt";
@@ -67,6 +72,57 @@ pub fn valid_map_function<'a>(
             } else {
                 Err(format!("{GET} takes {k} as argument "))
             }
+        }
+        _ => Err(format!("unknown map function: {id}")),
+    }
+}
+
+pub fn valid_map_struct_function<'a>(
+    id: &str,
+    args: Vec<Result<Type<'a>, Type<'a>>>,
+) -> Result<Type<'a>, String> {
+    match id {
+        SIZE | CAPACITY | TOMBS | CLEAR => {
+            if args.is_empty() {
+                Ok(if id == CLEAR { Type::Unit } else { Type::Int })
+            } else {
+                Err(format!("{id} does not take arguments"))
+            }
+        }
+        GET => {
+            if args.len() == 1 {
+                if let Err(r) = &args[0] {
+                    return Ok(r.clone());
+                }
+            }
+            Err(format!("{GET} takes single key as argument "))
+        }
+        INSERT => {
+            if args.len() == 2 {
+                if let Err(v1) = &args[0] {
+                    if let Ok(v2) = &args[1] {
+                        if v1 == v2 {
+                            return Ok(Type::Unit);
+                        }
+                    }
+                }
+            }
+            Err(format!("{INSERT} takes key and value as arguments "))
+        }
+        REMOVE => {
+            if args.len() == 1 && args[0].is_err() {
+                return Ok(Type::Unit);
+            }
+            
+            Err(format!("{REMOVE} takes single key as argument "))
+        }
+        GET_MAYBE => {
+			if args.len() == 1 {
+                if let Err(r) = &args[0] {
+                    return Ok(Type::Map(Box::new(Type::Unit), Box::new(r.clone())));
+                }
+            }
+            Err(format!("{GET} takes single key as argument "))
         }
         _ => Err(format!("unknown map function: {id}")),
     }

@@ -317,7 +317,6 @@ impl<'a> FileParser {
                 }
             }
         }
-        println!("{:?}", structs);
 
         Ok(Program {
             pos: Possition {

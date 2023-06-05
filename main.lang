@@ -12,10 +12,18 @@
 
 <Node> {
 	NEXT -> <Node>
-	VALUE -> int 
+	VALUE -> <Shape>
 }
 
 fn int main() {
 	new <Color> c
+	c.insert(G, 100)
+	<void,int> g = c.getMaybe(G)
+	printInt(g.size())
+	printLn()
+	c.remove(G)
+	g = c.getMaybe(G)
+	printInt(g.size())
+	printLn()
 	return 0
 }

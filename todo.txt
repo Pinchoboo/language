@@ -18,6 +18,7 @@ mark tombstone empty
 
 flat hash set sse instructions 16 probe
 
-4. struct type
+
 5. strings
-6. optimise
+6. hash maps
+7. optimise

@@ -1,5 +1,6 @@
 use std::{
-    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command, rc::Rc,
+    cell::RefCell, collections::HashMap, iter::once_with, option, path::Path, process::Command,
+    rc::Rc,
 };
 
 use inkwell::{
@@ -18,7 +19,7 @@ use inkwell::{
 use crate::{
     functions::{self},
     parser::{BinOp, Block, Expression, Program, Statement, Type, Value},
-    typecheck::{self, ScopeInfo},
+    typecheck::{self, find_structmaptype, ScopeInfo},
 };
 const PRINTF: &str = "printf";
 const MEMSET: &str = "memset";
@@ -51,6 +52,9 @@ pub fn compile(program: Program) {
     c.compile(program);
 }
 
+pub const STRUCT_MAP_SIZE: u32 = 0;
+pub const STRUCT_MAP_FLAGS: u32 = 1;
+
 pub const MAP_CAPACITY: u32 = 0;
 pub const MAP_SIZE: u32 = 1;
 pub const MAP_TOMBS: u32 = 2;
@@ -59,8 +63,8 @@ pub const MAP_STATES: u32 = 4;
 pub const MAP_VALUES: u32 = 5;
 
 pub const STATE_FREE: u64 = 0;
-pub const STATE_TOMB: u64 = 1;
-pub const STATE_TAKEN: u64 = 2;
+pub const STATE_TAKEN: u64 = 1;
+pub const STATE_TOMB: u64 = 2;
 
 impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
     fn llvmstruct(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> StructType<'ctx> {
@@ -97,16 +101,19 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             Type::StructMap(id) => {
                 let (_, ty, n) = typecheck::find_structmaptype(id, si.clone()).unwrap();
                 let struct_name = format!("{t}_{n}");
-                let capacity = self.context.i64_type();
                 let size = self.context.i64_type();
-                let tombs = self.context.i64_type();
 
                 if !self.mapstructs.contains_key(t) {
                     let st = self.context.opaque_struct_type(&struct_name);
                     self.mapstructs.insert(t.clone(), st);
-                    let mut fieldtypes = vec![capacity.into(), size.into(), tombs.into()];
+                    let mut fieldtypes = vec![
+                        size.into(),
+                        self.llvmtype(&Type::Bool, si.clone())
+                            .ptr_type(AddressSpace::default())
+                            .into(),
+                    ];
                     for (_, t) in ty {
-                        fieldtypes.push(self.llvmtype(&t, si.clone()))
+                        fieldtypes.push(self.llvmtype(&t, si.clone()));
                     }
                     st.set_body(&fieldtypes, false);
                 }
@@ -146,12 +153,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             Type::Bool => self.context.bool_type().fn_type(param_types, is_var_args),
             Type::Char => self.context.i64_type().fn_type(param_types, is_var_args),
             Type::Unit => self.context.void_type().fn_type(param_types, is_var_args),
-            Type::Map(_, _) => self
+            Type::Map(_, _) | Type::StructMap(_) => self
                 .llvmstruct(t, si)
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum()
                 .fn_type(param_types, is_var_args),
-            Type::StructMap(_) => todo!(),
         }
     }
 
@@ -396,23 +402,24 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             .unwrap_left(),
                     );
                     self.vars.insert(*i, mapptr);
-                } else if let Type::StructMap(sid) = maptype {
+                } else if let Type::StructMap(_) = maptype {
                     let varname = format!("{id}_{i}");
                     let mapptr = self
                         .builder
                         .build_alloca(self.llvmtype(maptype, scopeinfo.clone()), &varname);
-
-                    let malloctype = self.llvmstruct(maptype, scopeinfo.clone());
-					todo!();
-                    //todo insert values
+                    self.builder.build_store(
+                        mapptr,
+                        self.builder
+                            .build_call(self.structmapcreate(maptype, scopeinfo), &[], "")
+                            .try_as_basic_value()
+                            .unwrap_left(),
+                    );
                     self.vars.insert(*i, mapptr);
                 } else {
                     panic!()
                 }
             }
             crate::parser::StatementType::Free(_, Some(i)) => {
-                //todo make function
-
                 let mapptr = self.vars.get(i).unwrap();
                 let map = self.builder.build_load(*mapptr, "").into_pointer_value();
                 let keys = self
@@ -768,9 +775,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .try_as_basic_value()
                 .unwrap_left(),
             Value::Identifier(id, Some(_)) => {
-                let foundvar = typecheck::find_variable(id, scopeinfo).unwrap();
-                self.builder
-                    .build_load(*self.vars.get(&foundvar.2).unwrap(), "")
+                if let Some(foundvar) = typecheck::find_variable(id, scopeinfo.clone()) {
+                    self.builder
+                        .build_load(*self.vars.get(&foundvar.2).unwrap(), "")
+                } else {
+                    panic!()
+                }
             }
             Value::MapCall(id, id2, exprs, Some(i)) => {
                 self.emit_map_call(id, id2, exprs, i, scopeinfo, fv)
@@ -818,13 +828,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
         fv: FunctionValue<'ctx>,
     ) -> BasicValueEnum<'ctx> {
-        let args: Vec<BasicMetadataValueEnum<'ctx>> = args
-            .iter()
-            .map(|expr| {
-                BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone(), fv))
-            })
-            .collect();
-        if let Some((_, Type::Map(k, v), i, _)) = typecheck::find_variable(id, scopeinfo.clone()) {
+        let var = typecheck::find_variable(id, scopeinfo.clone());
+        if let Some((_, Type::Map(k, v), i, _)) = var {
             let llvmkeytype = self.llvmtype(&k, scopeinfo.clone());
             let llvmvaluetype = self.llvmtype(&v, scopeinfo.clone());
             let maptype = Type::Map(k.clone(), v.clone());
@@ -832,6 +837,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             let mapptr = *self.vars.get(&i).unwrap();
             let map = self.builder.build_load(mapptr, id).into_pointer_value();
             let mut allargs: Vec<BasicMetadataValueEnum<'ctx>> = vec![map.into()];
+            let args: Vec<BasicMetadataValueEnum<'ctx>> = args
+                .iter()
+                .map(|expr| {
+                    BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone(), fv))
+                })
+                .collect();
             allargs.extend_from_slice(&args);
             match *id2 {
                 functions::SIZE => {
@@ -1521,7 +1532,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         /*
                         getMaybe(map, k) {
                             i = hash(k) % map.capacity
-                            returnval = create <void,V>
+                            returnval = new <void,V>
                             IF K == UNIT {
                                 if map.size == 1 {
                                     returnval.insert(map.values[0])
@@ -1789,8 +1800,337 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     panic!("unreachable")
                 }
             }
+        } else if let Some((_, Type::StructMap(maptype), i, _)) = var {
+            let smt = typecheck::find_structmaptype(maptype, scopeinfo.clone()).expect("exists");
+            let maptype = Type::StructMap(maptype);
+            let llvmmaptype = self.llvmtype(&maptype, scopeinfo.clone());
+            let mapptr = *self.vars.get(&i).unwrap();
+            let map = self.builder.build_load(mapptr, id).into_pointer_value();
+            let mut allargs: Vec<BasicMetadataValueEnum<'ctx>> = vec![map.into()];
+            let mut idx = None;
+            allargs.extend(args.iter().filter_map(|expr| {
+                if let Expression::Value(Value::Identifier(id, _), _) = expr {
+                    if let Some((p, _)) = smt.1.iter().enumerate().find(|(_, (s, _))| s.eq(id)) {
+                        idx = Some(p as u64);
+                        return None;
+                    }
+                }
+                return Some(BasicMetadataValueEnum::from(self.emit_expression(
+                    expr,
+                    scopeinfo.clone(),
+                    fv,
+                )));
+            }));
+
+            match *id2 {
+                functions::SIZE => {
+                    let size = self
+                        .builder
+                        .build_struct_gep(map, STRUCT_MAP_SIZE, &(id.to_string() + ".size"))
+                        .unwrap();
+                    self.builder.build_load(size, "")
+                }
+                functions::CAPACITY => self
+                    .context
+                    .i64_type()
+                    .const_int(smt.1.len() as u64, false)
+                    .into(),
+                functions::TOMBS => self.context.i64_type().const_zero().into(),
+                functions::CLEAR => {
+                    todo!()
+                }
+                functions::INSERT => {
+                    self.builder.build_call(
+                        self.mapstructinsert(&maptype, scopeinfo.clone(), idx.unwrap()),
+                        &allargs,
+                        "",
+                    );
+                    self.context.custom_width_int_type(0).const_zero().into()
+                }
+                functions::REMOVE => {
+                    self.builder.build_call(
+                        self.mapstructremove(&maptype, scopeinfo.clone(), idx.unwrap()),
+                        &allargs,
+                        "",
+                    );
+                    self.context.custom_width_int_type(0).const_zero().into()
+                }
+                functions::CLEAR => {
+                    todo!()
+                }
+                functions::GET => {
+                    let index = idx.unwrap();
+                    let fname = format!("{}_get_{index}", &maptype);
+                    let fv = if let Some(fv) = self.module.get_function(&fname) {
+                        fv
+                    } else {
+                        let v = smt.1.get(index as usize).unwrap().1.clone();
+                        let params: Vec<BasicMetadataTypeEnum> =
+                            vec![self.llvmtype(&maptype, scopeinfo.clone()).into()];
+                        /*
+                        fn mapstructget<K>(){
+                            return map.values[i]
+                        }
+                        */
+                        let fv = self.module.add_function(
+                            &fname,
+                            self.llvmfunctiontype(&v, scopeinfo.clone(), &params, false),
+                            None,
+                        );
+                        let call_block = self.builder.get_insert_block().unwrap();
+                        self.builder
+                            .position_at_end(self.context.append_basic_block(fv, "entry"));
+                        self.builder.build_return(Some(
+                            &self.builder.build_load(
+                                self.builder
+                                    .build_struct_gep(
+                                        fv.get_first_param().unwrap().into_pointer_value(),
+                                        2 + index as u32,
+                                        "",
+                                    )
+                                    .unwrap(),
+                                "",
+                            ),
+                        ));
+                        self.builder.position_at_end(call_block);
+                        fv
+                    };
+                    self.builder
+                        .build_call(fv, &allargs, "")
+                        .try_as_basic_value()
+                        .unwrap_left()
+                }
+                functions::GET_MAYBE => {
+                    let index = idx.unwrap();
+                    let fname = format!("{}_get_maybe_{index}", &maptype);
+                    let fv = if let Some(fv) = self.module.get_function(&fname) {
+                        fv
+                    } else {
+                        let v = smt.1.get(index as usize).unwrap().1.clone();
+                        let returntype = Type::Map(Box::new(Type::Unit), Box::new(v.clone()));
+                        let params: Vec<BasicMetadataTypeEnum> =
+                            vec![self.llvmtype(&maptype, scopeinfo.clone()).into()];
+                        /*
+                        fn mapstructgetmaybe<K>(){
+                            new <void,V> r
+                            if map.states[i] == taken {
+                                r.insert(map.values[i])
+                            }
+                            return r
+                        }
+                        */
+                        let fv = self.module.add_function(
+                            &fname,
+                            self.llvmfunctiontype(&returntype, scopeinfo.clone(), &params, false),
+                            None,
+                        );
+                        let call_block = self.builder.get_insert_block().unwrap();
+                        self.builder
+                            .position_at_end(self.context.append_basic_block(fv, "entry"));
+
+                        let returnvalptr = self.builder.build_alloca(
+                            self.llvmtype(&returntype, scopeinfo.clone()),
+                            "returnvalptr",
+                        );
+
+                        self.builder.build_store(
+                            returnvalptr,
+                            self.builder
+                                .build_call(self.mapcreate(&returntype, scopeinfo.clone()), &[], "")
+                                .try_as_basic_value()
+                                .unwrap_left(),
+                        );
+                        let returnval = self.builder.build_load(returnvalptr, "returnval");
+
+                        let ifbody = self.context.append_basic_block(fv, "ifbody");
+                        let afterif = self.context.append_basic_block(fv, "afterif");
+
+                        let flags = self
+                            .builder
+                            .build_load(
+                                self.builder
+                                    .build_struct_gep(
+                                        fv.get_nth_param(0).unwrap().into_pointer_value(),
+                                        STRUCT_MAP_FLAGS,
+                                        "",
+                                    )
+                                    .unwrap(),
+                                "map.states",
+                            )
+                            .into_pointer_value();
+                        let flagi = unsafe {
+                            self.builder.build_gep(
+                                flags,
+                                &[self.context.i64_type().const_int(index, false)],
+                                "map.states_i",
+                            )
+                        };
+                        self.builder.build_conditional_branch(
+                            self.builder.build_int_compare(
+                                IntPredicate::EQ,
+                                self.builder.build_load(flagi, "").into_int_value(),
+                                self.context.bool_type().const_all_ones(),
+                                "is_taken",
+                            ),
+                            ifbody,
+                            afterif,
+                        );
+                        self.builder.position_at_end(ifbody);
+                        let insertargs = if Type::Unit.ne(&v) {
+                            let value = self.builder.build_load(
+                                self.builder
+                                    .build_struct_gep(
+                                        fv.get_nth_param(0).unwrap().into_pointer_value(),
+                                        2 + index as u32,
+                                        &(id.to_string() + ".values.ptr"),
+                                    )
+                                    .unwrap(),
+                                "values",
+                            );
+                            vec![returnval.into(), value.into()]
+                        } else {
+                            vec![returnval.into()]
+                        };
+                        self.builder.build_call(
+                            self.mapinsert(&returntype, scopeinfo.clone()),
+                            &insertargs,
+                            "",
+                        );
+                        self.builder.build_unconditional_branch(afterif);
+                        self.builder.position_at_end(afterif);
+
+                        self.builder.build_return(Some(&returnval));
+                        self.builder.position_at_end(call_block);
+                        fv
+                    };
+                    self.builder
+                        .build_call(fv, &allargs, "")
+                        .try_as_basic_value()
+                        .unwrap_left()
+                }
+                _ => {
+                    todo!()
+                }
+            }
         } else {
             panic!("should exists")
+        }
+    }
+
+    fn mapstructinsert(
+        &mut self,
+        maptype: &Type<'b>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+        index: u64,
+    ) -> FunctionValue {
+        let fname = format!("{}_insert_{index}", &maptype);
+        if let Some(fv) = self.module.get_function(&fname) {
+            fv
+        } else if let Type::StructMap(smt) = maptype {
+            let smt = find_structmaptype(smt, scopeinfo.clone()).expect("exist bc typecheck");
+            let v = smt.1.get(index as usize).unwrap().1.clone();
+            let params: Vec<BasicMetadataTypeEnum> = if v == Type::Unit {
+                vec![self.llvmtype(maptype, scopeinfo.clone()).into()]
+            } else {
+                vec![
+                    self.llvmtype(maptype, scopeinfo.clone()).into(),
+                    self.llvmtype(&v, scopeinfo.clone()).into(),
+                ]
+            };
+            const MAP_PARAM: u32 = 0;
+            const VALUE_PARAM: u32 = 1;
+            /*
+            fn mapstructinsert<K>(v){
+                if map.states[i] != TAKEN {
+                    map.size = map.size + 1
+                }
+                map.states[i] = TAKEN
+                IF V NOT UNIT{
+                    map.values[i] = v
+                }
+            }
+            */
+            let fv = self.module.add_function(
+                &fname,
+                self.llvmfunctiontype(&Type::Unit, scopeinfo.clone(), &params, false),
+                None,
+            );
+            let call_block = self.builder.get_insert_block().unwrap();
+            self.builder
+                .position_at_end(self.context.append_basic_block(fv, "entry"));
+
+            let ifbody = self.context.append_basic_block(fv, "ifbody");
+            let afterif = self.context.append_basic_block(fv, "afterif");
+
+            let flags = self
+                .builder
+                .build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            STRUCT_MAP_FLAGS,
+                            "",
+                        )
+                        .unwrap(),
+                    "map.states",
+                )
+                .into_pointer_value();
+            let flagi = unsafe {
+                self.builder.build_gep(
+                    flags,
+                    &[self.context.i64_type().const_int(index, false)],
+                    "map.states_i",
+                )
+            };
+            self.builder.build_conditional_branch(
+                self.builder.build_int_compare(
+                    IntPredicate::NE,
+                    self.builder.build_load(flagi, "").into_int_value(),
+                    self.context.bool_type().const_all_ones(),
+                    "is_taken",
+                ),
+                ifbody,
+                afterif,
+            );
+            self.builder.position_at_end(ifbody);
+            let size = self
+                .builder
+                .build_struct_gep(
+                    fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                    STRUCT_MAP_SIZE,
+                    "map.size",
+                )
+                .unwrap();
+            self.builder.build_store(
+                size,
+                self.builder.build_int_add(
+                    self.builder.build_load(size, "").into_int_value(),
+                    self.context.i64_type().const_int(1, false),
+                    "",
+                ),
+            );
+            self.builder.build_unconditional_branch(afterif);
+            self.builder.position_at_end(afterif);
+            self.builder
+                .build_store(flagi, self.context.bool_type().const_all_ones());
+            if v.ne(&Type::Unit) {
+                self.builder.build_store(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            2 + index as u32,
+                            "",
+                        )
+                        .unwrap(),
+                    fv.get_nth_param(VALUE_PARAM).unwrap(),
+                );
+            }
+
+            self.builder.build_return(None);
+            self.builder.position_at_end(call_block);
+            fv
+        } else {
+            panic!()
         }
     }
 
@@ -2525,5 +2865,152 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 "",
             )
             .into_pointer_value()
+    }
+
+    fn structmapcreate(
+        &mut self,
+        maptype: &Type<'b>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+    ) -> FunctionValue {
+        if let Type::StructMap(id) = maptype {
+            let fname = format!("create_{maptype}");
+            if let Some(fv) = self.module.get_function(&fname) {
+                fv
+            } else {
+                let smt = typecheck::find_structmaptype(id, scopeinfo.clone()).unwrap();
+                let fv = self.module.add_function(
+                    &fname,
+                    self.llvmfunctiontype(maptype, scopeinfo.clone(), &[], false),
+                    None,
+                );
+                let call_block = self.builder.get_insert_block().unwrap();
+                let llvmmaptype = self.llvmstruct(maptype, scopeinfo.clone());
+                self.builder
+                    .position_at_end(self.context.append_basic_block(fv, "entry"));
+                let map = self.builder.build_malloc(llvmmaptype, "map").unwrap();
+                let size = self
+                    .builder
+                    .build_struct_gep(map, STRUCT_MAP_SIZE, "map.size")
+                    .unwrap();
+                self.builder
+                    .build_store(size, self.context.i64_type().const_int(0, false));
+                let booltype = self.llvmtype(&Type::Bool, scopeinfo.clone());
+                self.builder.build_store(
+                    self.builder
+                        .build_struct_gep(map, STRUCT_MAP_FLAGS, "")
+                        .unwrap(),
+                    self.emit_calloc(
+                        booltype,
+                        self.context
+                            .i32_type()
+                            .const_int(smt.1.len() as u64, false)
+                            .into(),
+                    ),
+                );
+                let mapptr = self
+                    .builder
+                    .build_alloca(self.llvmtype(maptype, scopeinfo.clone()), "map");
+                self.builder.build_store(mapptr, map);
+                self.builder.build_return(Some(&map.as_basic_value_enum()));
+
+                self.builder.position_at_end(call_block);
+                fv
+            }
+        } else {
+            panic!("wrong type");
+        }
+    }
+
+    fn mapstructremove(
+        &mut self,
+        maptype: &Type<'b>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+        index: u64,
+    ) -> FunctionValue {
+        let fname = format!("{}_remove_{index}", &maptype);
+        if let Some(fv) = self.module.get_function(&fname) {
+            fv
+        } else if let Type::StructMap(_) = maptype {
+            let params: Vec<BasicMetadataTypeEnum> =
+                vec![self.llvmtype(maptype, scopeinfo.clone()).into()];
+            const MAP_PARAM: u32 = 0;
+            /*
+            fn mapstructremove<K>(v){
+                if map.states[i] == TAKEN {
+                    map.size = map.size - 1
+                }
+                map.states[i] = FREE
+            }
+            */
+            let fv = self.module.add_function(
+                &fname,
+                self.llvmfunctiontype(&Type::Unit, scopeinfo.clone(), &params, false),
+                None,
+            );
+            let call_block = self.builder.get_insert_block().unwrap();
+            self.builder
+                .position_at_end(self.context.append_basic_block(fv, "entry"));
+
+            let ifbody = self.context.append_basic_block(fv, "ifbody");
+            let afterif = self.context.append_basic_block(fv, "afterif");
+
+            let flags = self
+                .builder
+                .build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            STRUCT_MAP_FLAGS,
+                            "",
+                        )
+                        .unwrap(),
+                    "map.states",
+                )
+                .into_pointer_value();
+            let flagi = unsafe {
+                self.builder.build_gep(
+                    flags,
+                    &[self.context.i64_type().const_int(index, false)],
+                    "map.states_i",
+                )
+            };
+            self.builder.build_conditional_branch(
+                self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    self.builder.build_load(flagi, "").into_int_value(),
+                    self.context.bool_type().const_all_ones(),
+                    "is_taken",
+                ),
+                ifbody,
+                afterif,
+            );
+            self.builder.position_at_end(ifbody);
+            let size = self
+                .builder
+                .build_struct_gep(
+                    fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                    STRUCT_MAP_SIZE,
+                    "map.size",
+                )
+                .unwrap();
+            self.builder.build_store(
+                size,
+                self.builder.build_int_sub(
+                    self.builder.build_load(size, "").into_int_value(),
+                    self.context.i64_type().const_int(1, false),
+                    "",
+                ),
+            );
+            self.builder.build_unconditional_branch(afterif);
+            self.builder.position_at_end(afterif);
+            self.builder
+                .build_store(flagi, self.context.bool_type().const_zero());
+
+            self.builder.build_return(None);
+            self.builder.position_at_end(call_block);
+            fv
+        } else {
+            panic!()
+        }
     }
 }
