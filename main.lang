@@ -16,10 +16,6 @@
 }
 
 fn int main() {
-	return 0
-}
-
-fn int test(<Shape> s, <Node> n) {
-	<Shape> ns = s
+	new <Color> c
 	return 0
 }

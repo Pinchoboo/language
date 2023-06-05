@@ -103,7 +103,7 @@ impl<'a> Display for Type<'a> {
 impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
     type Error = ();
     fn try_from(value: Pair<'i, Rule>) -> Result<Self, Self::Error> {
-        if value.as_rule() == Rule::r#type {
+        if value.as_rule() == Rule::r#type || value.as_rule() == Rule::creatableType {
             let inner = value.into_inner().next().ok_or(())?;
             match inner.as_rule() {
                 Rule::intType => Ok(Type::Int),
@@ -532,22 +532,10 @@ impl<'a> FileParser {
                                 let mut inner = sp.into_inner();
                                 StatementType::Creation(
                                     {
-                                        let mut inner =
-                                            inner.next().expect("type to exist").into_inner();
-                                        Type::Map(
-                                            Box::new(
-                                                Type::try_from(
-                                                    inner.next().expect("key type to exist"),
-                                                )
-                                                .expect("valid type"),
-                                            ),
-                                            Box::new(
-                                                Type::try_from(
-                                                    inner.next().expect("value type to exist"),
-                                                )
-                                                .expect("valid type"),
-                                            ),
-                                        )
+                                        Type::try_from(
+											inner.next().expect("type"),
+										)
+										.expect("valid type")
                                     },
                                     inner
                                         .next()

@@ -63,7 +63,7 @@ pub const STATE_TOMB: u64 = 1;
 pub const STATE_TAKEN: u64 = 2;
 
 impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
-    fn llvmstruct(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> &StructType<'ctx> {
+    fn llvmstruct(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> StructType<'ctx> {
         match t {
             Type::Map(k, v) => {
                 let struct_name = format!("{t}");
@@ -78,7 +78,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .ptr_type(AddressSpace::default());
                 let vals = self.llvmtype(v, si).ptr_type(AddressSpace::default());
 
-                self.mapstructs.entry(t.clone()).or_insert({
+                *self.mapstructs.entry(t.clone()).or_insert({
                     let st = self.context.opaque_struct_type(&struct_name);
                     st.set_body(
                         &[
@@ -101,17 +101,17 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 let size = self.context.i64_type();
                 let tombs = self.context.i64_type();
 
-                
-
-                let st = self.mapstructs
-                    .entry(t.clone())
-                    .or_insert( {println!("test");self.context.opaque_struct_type(&struct_name)});
-				let mut fieldtypes = vec![capacity.into(), size.into(), tombs.into()];
-                for (_, t) in ty {
-                    fieldtypes.push(self.llvmtype(&t, si.clone()))
+                if !self.mapstructs.contains_key(t) {
+                    let st = self.context.opaque_struct_type(&struct_name);
+                    self.mapstructs.insert(t.clone(), st);
+                    let mut fieldtypes = vec![capacity.into(), size.into(), tombs.into()];
+                    for (_, t) in ty {
+                        fieldtypes.push(self.llvmtype(&t, si.clone()))
+                    }
+                    st.set_body(&fieldtypes, false);
                 }
-				self.structbodies.push((*st,fieldtypes));
-				st
+
+                *self.mapstructs.get(&t.clone()).unwrap()
             }
             _ => {
                 assert!(matches!(t, Type::Map { .. }));
@@ -396,6 +396,16 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             .unwrap_left(),
                     );
                     self.vars.insert(*i, mapptr);
+                } else if let Type::StructMap(sid) = maptype {
+                    let varname = format!("{id}_{i}");
+                    let mapptr = self
+                        .builder
+                        .build_alloca(self.llvmtype(maptype, scopeinfo.clone()), &varname);
+
+                    let malloctype = self.llvmstruct(maptype, scopeinfo.clone());
+					todo!();
+                    //todo insert values
+                    self.vars.insert(*i, mapptr);
                 } else {
                     panic!()
                 }
@@ -523,7 +533,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .position_at_end(self.context.append_basic_block(fv, "entry"));
                 let map = self
                     .builder
-                    .build_malloc(*self.llvmstruct(maptype, scopeinfo.clone()), "map")
+                    .build_malloc(self.llvmstruct(maptype, scopeinfo.clone()), "map")
                     .unwrap();
 
                 let capacity = self

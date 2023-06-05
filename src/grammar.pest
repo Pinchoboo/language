@@ -101,9 +101,9 @@ invert = { "!" }
 assignment = {
     type? ~ identifier ~ "=" ~ expression
 }
-
+creatableType = {mapType | structmapType}
 creation = {
-	createKeyword ~ mapType ~ identifier
+	createKeyword ~ creatableType ~ identifier
 }
 
 scope    = _{ "{" ~ block ~ "}" }
