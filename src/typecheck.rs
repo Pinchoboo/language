@@ -440,6 +440,7 @@ impl<'a> TypeCheckContext<'a> {
                     panic!("could not find map {id}")
                 }
             }
+            Value::String(_) => Type::ConstMap(Box::new(Type::Int), Box::new(Type::Char)),
         }
     }
 }

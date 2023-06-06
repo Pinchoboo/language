@@ -69,6 +69,7 @@ pub enum Type<'a> {
     Char,
     Unit,
     Map(Box<Type<'a>>, Box<Type<'a>>),
+	ConstMap(Box<Type<'a>>, Box<Type<'a>>),
     StructMap(Identifier<'a>),
 }
 
@@ -83,6 +84,15 @@ impl<'a> Display for Type<'a> {
             Type::Map(k, v) => {
                 {
                     f.write_str("map_")?;
+                    std::fmt::Display::fmt(&k, f)?;
+                    f.write_str("_to_")?;
+                    std::fmt::Display::fmt(&v, f)?
+                };
+                Ok(())
+            }
+			Type::ConstMap(k, v) => {
+                {
+                    f.write_str("const_map_")?;
                     std::fmt::Display::fmt(&k, f)?;
                     f.write_str("_to_")?;
                     std::fmt::Display::fmt(&v, f)?
@@ -104,7 +114,8 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
     type Error = ();
     fn try_from(value: Pair<'i, Rule>) -> Result<Self, Self::Error> {
         if value.as_rule() == Rule::r#type || value.as_rule() == Rule::creatableType {
-            let inner = value.into_inner().next().ok_or(())?;
+			let mut value = value.into_inner();
+            let inner = value.next().ok_or(())?;
             match inner.as_rule() {
                 Rule::intType => Ok(Type::Int),
                 Rule::floatType => Ok(Type::Float),
@@ -120,6 +131,14 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
                 }
 				Rule::structmapType => {
 					Ok(Type::StructMap(inner.into_inner().next().unwrap().as_str()))
+				}
+				Rule::r#const => {
+					
+					let mut inner = value.next().unwrap().into_inner();
+                    Ok(Type::ConstMap(
+                        Box::new(Type::try_from(inner.next().expect("key type to exist"))?),
+                        Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
+                    ))
 				}
                 _ => Err(()),
             }
@@ -216,6 +235,7 @@ pub enum Value<'a> {
         Vec<Expression<'a>>,
         Option<i32>,
     ),
+    String(&'a str),
 }
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BinOp {
@@ -640,6 +660,7 @@ impl<'a> FileParser {
                     None,
                 )
             }
+			Rule::string => Value::String(pair.into_inner().next().unwrap().as_str()),
             _ => panic!("unreachable"),
         }
     }

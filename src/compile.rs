@@ -7,10 +7,10 @@ use inkwell::{
     context::Context,
     module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
-    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
+    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType, StructType},
     values::{
-        BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue,
-        PointerValue,
+        ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
+        FunctionValue, PointerValue,
     },
     AddressSpace, IntPredicate, OptimizationLevel,
 };
@@ -97,6 +97,21 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     st
                 })
             }
+            Type::ConstMap(k, v) => {
+                let struct_name = format!("{t}");
+                let size = self.context.i64_type();
+                let keys = self
+                    .llvmtype(k, si.clone())
+                    .ptr_type(AddressSpace::default());
+                let vals = self.llvmtype(v, si).ptr_type(AddressSpace::default());
+
+                *self.mapstructs.entry(t.clone()).or_insert({
+                    let st = self.context.opaque_struct_type(&struct_name);
+                    st.set_body(&[size.into(), keys.into(), vals.into()], false);
+                    st
+                })
+            }
+
             Type::StructMap(id) => {
                 let (_, ty, n) = typecheck::find_structmaptype(id, si.clone()).unwrap();
                 let struct_name = format!("{t}_{n}");
@@ -131,9 +146,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             Type::Int => self.context.i64_type().as_basic_type_enum(),
             Type::Float => self.context.f64_type().as_basic_type_enum(),
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
-            Type::Char => self.context.i64_type().as_basic_type_enum(),
+            Type::Char => self.context.i8_type().as_basic_type_enum(),
             Type::Unit => self.context.custom_width_int_type(0).as_basic_type_enum(),
-            Type::Map(_, _) | Type::StructMap(_) => self
+            Type::Map(_, _) | Type::StructMap(_) | Type::ConstMap(_, _) => self
                 .llvmstruct(t, si)
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum(),
@@ -157,6 +172,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum()
                 .fn_type(param_types, is_var_args),
+            Type::ConstMap(_, _) => todo!(),
         }
     }
 
@@ -449,11 +465,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         );
                         self.builder.build_free(map);
                     }
-					Some((_, Type::StructMap(_), _, _)) => {
-						let mapptr = self.vars.get(i).unwrap();
+                    Some((_, Type::StructMap(_), _, _)) => {
+                        let mapptr = self.vars.get(i).unwrap();
                         let map = self.builder.build_load(*mapptr, "").into_pointer_value();
-						self.builder.build_free(map);
-					}
+                        self.builder.build_free(map);
+                    }
                     _ => {
                         panic!("map variable {id} not found")
                     }
@@ -540,7 +556,13 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             if let Some(fv) = self.module.get_function(&fname) {
                 fv
             } else {
-                let initial_capacity: u32 = if Type::Unit.eq(k) { 1 } else if Type::Bool.eq(k) {4} else{ 16 };
+                let initial_capacity: u32 = if Type::Unit.eq(k) {
+                    1
+                } else if Type::Bool.eq(k) {
+                    4
+                } else {
+                    16
+                };
                 let fv = self.module.add_function(
                     &fname,
                     self.llvmfunctiontype(maptype, scopeinfo.clone(), &[], false),
@@ -795,6 +817,57 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             }
             Value::MapCall(id, id2, exprs, Some(i)) => {
                 self.emit_map_call(id, id2, exprs, i, scopeinfo, fv)
+            }
+            Value::String(str) => {
+                let ty = self.llvmstruct(
+                    &Type::ConstMap(Box::new(Type::Int), Box::new(Type::Char)),
+                    scopeinfo.clone(),
+                );
+                let len = str.len();
+
+                let keysptr = {
+                    let gv = self.module.add_global(
+                        self.context.i64_type().array_type(len as u32),
+                        Some(AddressSpace::default()),
+                        "g.keys",
+                    );
+                    gv.set_linkage(Linkage::Internal);
+                    let vals = self.context.i64_type().const_array(
+                        &(0..len)
+                            .map(|i| self.context.i64_type().const_int(i as u64, false))
+                            .collect::<Vec<_>>(),
+                    );
+                    gv.set_initializer(&vals.as_basic_value_enum());
+					self.builder.build_bitcast(gv.as_pointer_value(), self.context.i64_type().ptr_type(AddressSpace::default()), "")
+                    
+                };
+                let strptr = {
+                    let gv = self.module.add_global(
+                        self.context.i8_type().array_type(len as u32),
+                        Some(AddressSpace::default()),
+                        "g.str",
+                    );
+                    gv.set_linkage(Linkage::Internal);
+                    let vals = self.context.const_string(str.as_ref(), false);
+                    gv.set_initializer(&vals.as_basic_value_enum());
+					self.builder.build_bitcast(gv.as_pointer_value(), self.context.i8_type().ptr_type(AddressSpace::default()), "")
+                };
+
+                let gv = self
+                    .module
+                    .add_global(ty, Some(AddressSpace::default()), "g");
+                gv.set_linkage(Linkage::Internal);
+
+                let size = self.context.i64_type().const_int(len as u64, false);
+
+                gv.set_initializer(
+                    &self
+                        .context
+                        .const_struct(&[size.into(), keysptr, strptr], false),
+                );
+
+				let ptr = gv.as_pointer_value();
+                ptr.as_basic_value_enum()
             }
             _ => panic!("unreachable"),
         }
@@ -1128,7 +1201,13 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     let fv = if let Some(fv) = self.module.get_function(&fname) {
                         fv
                     } else {
-                        let initial_capacity: u32 = if Type::Unit.eq(&k) { 1 } else if Type::Bool.eq(&k) {4} else{ 16 };
+                        let initial_capacity: u32 = if Type::Unit.eq(&k) {
+                            1
+                        } else if Type::Bool.eq(&k) {
+                            4
+                        } else {
+                            16
+                        };
                         let fv = self.module.add_function(
                             &fname,
                             self.llvmfunctiontype(

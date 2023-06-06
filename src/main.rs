@@ -12,7 +12,7 @@ mod compile;
 
 
 fn main() {
-    let fp = parser::FileParser::new("./main.lang").unwrap();
+    let fp = parser::FileParser::new("./main.mpl").unwrap();
     let mut ast = fp.parse().expect("expect no parsing problems");
 	File::create("./out/main.parsed.ast")
         .expect("no problems opening/creating file")

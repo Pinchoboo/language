@@ -1,6 +1,9 @@
 COMMENT    = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 
+string = ${ "\"" ~ inner ~ "\"" }
+inner = @{ (!"\"" ~ ANY)* }
+
 alpha = _{ 'a'..'z' | 'A'..'Z' }
 digit = _{ '0'..'9' }
 
@@ -13,8 +16,9 @@ boolean = { true | false }
 true    = { "true" }
 false   = { "false" }
 
-type      = { intType | floatType | boolType | charType | unitType | mapType | structmapType }
+type      = { intType | floatType | boolType | charType | unitType | const? ~ mapType | structmapType }
 
+const = {"const"}
 intType   = { "int" }
 floatType = { "float" }
 boolType  = { "bool" }
@@ -48,6 +52,7 @@ value = _{
   | call
   | identifier
   | char
+  | string
 }
 
 mapCall = {identifier ~ "." ~ call}
