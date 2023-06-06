@@ -140,7 +140,7 @@ impl<'a> TypeCheckContext<'a> {
         //check for duplicate variables identifiers
         //check types
         //check for return statements
-		
+
         let mut hasreturned = false;
         block.statements.iter_mut().for_each(|s| {
             match &mut s.statement {
@@ -236,7 +236,7 @@ impl<'a> TypeCheckContext<'a> {
                     }
                 }
                 crate::parser::StatementType::MapCall(id, id2, exprs, o) => {
-					let fv = find_variable(id, block.scopeinfo.clone());
+                    let fv = find_variable(id, block.scopeinfo.clone());
                     if let Some((_, Type::Map(k, v), n, _)) = fv {
                         *o = Some(n);
                         if let Err(e) = functions::valid_map_function(
@@ -251,7 +251,6 @@ impl<'a> TypeCheckContext<'a> {
                             panic!("{e}");
                         }
                     } else if let Some((_, Type::StructMap(msc), n, _)) = fv {
-						
                         if let Some(r) = find_structmaptype(msc, block.scopeinfo.clone()) {
                             *o = Some(n);
                             if let Err(e) = functions::valid_map_struct_function(
@@ -308,13 +307,14 @@ impl<'a> TypeCheckContext<'a> {
                     self.next_id += 1;
                 }
                 crate::parser::StatementType::Free(id, o) => {
-                    if let Some((_, Type::Map(_, _), n, _)) =
-                        find_variable(id, block.scopeinfo.clone())
-                    {
+                    let var = find_variable(id, block.scopeinfo.clone());
+                    if let Some((_, Type::Map(_, _), n, _)) = var {
                         *o = Some(n);
-                    } else {
-                        panic!("could not find map {id}")
-                    }
+                    } else if let Some((_, Type::StructMap(_), n, _)) = var {
+                        *o = Some(n);
+                    }else{
+						panic!("could not find map {id}")
+					}
                 }
             }
         });
@@ -422,7 +422,7 @@ impl<'a> TypeCheckContext<'a> {
                                 .iter_mut()
                                 .map(|e| {
                                     if let Expression::Value(Value::Identifier(key, _), _) = &e {
-                                        if let Some((_, t)) = r.1.iter().find(|(s, _)| {key.eq(s)}) {
+                                        if let Some((_, t)) = r.1.iter().find(|(s, _)| key.eq(s)) {
                                             return Err(t.clone());
                                         }
                                     }

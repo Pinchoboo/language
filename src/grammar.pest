@@ -19,11 +19,11 @@ intType   = { "int" }
 floatType = { "float" }
 boolType  = { "bool" }
 charType  = { "char" }
-unitType  = { "void" }
-mapType = { "<" ~ type ~ "," ~ type ~ ">" }
-structmapType  = {"<" ~ identifier ~ ">"}
+unitType  = { "void" | "()" }
+mapType = { "{" ~ type ~ "->" ~ type ~ "}" }
+structmapType  = {"{" ~ identifier ~ "}"}
 
-reserved        =  { type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword | freeKeyword }
+reserved        =  @{ (type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword | freeKeyword) ~ WHITESPACE }
 functionKeyword = _{ "fn" }
 whileKeyword    = _{ "while" }
 ifKeyword       = _{ "if" }
@@ -33,7 +33,7 @@ createKeyword   = _{ "new" }
 freeKeyword 	= _{ "free" }
 
 identifier = @{
-    !reserved ~ (alpha ~ (alpha | digit)*)
+    !(reserved) ~ (alpha ~ (alpha | digit)*)
 }
 
 call = {
@@ -88,8 +88,8 @@ equal        = { "==" }
 notEqual     = { "!=" }
 greater      = { ">" }
 smaller      = { "<" }
-greaterEqual = { ">=" }
-smallerEqual = { "<=" }
+greaterEqual = { "<=" }
+smallerEqual = { ">=" }
 
 unop = _{
     negate
@@ -119,7 +119,7 @@ block = {
 }
 
 keyTypePair = {identifier ~ "->" ~ type}
-structdef = {"<" ~ identifier ~ ">" ~ "{" ~ keyTypePair* ~ "}"}
+structdef = {"{" ~ identifier ~ "}" ~ "=" ~ "{" ~ keyTypePair* ~ "}"}
 
 program = {
     SOI ~ (function | structdef)* ~ (&EOI ~ ANY*)

@@ -1,10 +1,5 @@
 opt-14 ./out/main.ll -S -O1
 <void, T> = Option<&T>
-<A, B> map; 
-let maybe = map.get(a) -> <void, b>
-if maybe.contains(void) {
-    b = maybe.(void)
-}
 
 like java
 initial capacity 16 
@@ -18,7 +13,11 @@ mark tombstone empty
 
 flat hash set sse instructions 16 probe
 
+const <int,char> = "test"
 
 5. strings
 6. hash maps
-7. optimise
+7. hash loop
+8. optimise
+
+Type LETTER = A | B | C

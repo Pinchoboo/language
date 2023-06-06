@@ -1,6 +1,5 @@
 use std::{
-    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command,
-    rc::Rc,
+    cell::RefCell, collections::HashMap, iter::once_with, path::Path, process::Command, rc::Rc,
 };
 
 use inkwell::{
@@ -19,7 +18,7 @@ use inkwell::{
 use crate::{
     functions::{self},
     parser::{BinOp, Block, Expression, Program, Statement, Type, Value},
-    typecheck::{self, find_structmaptype, ScopeInfo},
+    typecheck::{self, find_structmaptype, find_variable, ScopeInfo},
 };
 const PRINTF: &str = "printf";
 const MEMSET: &str = "memset";
@@ -342,7 +341,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
     fn execute(&self) {
         let ee = self
             .module
-            .create_jit_execution_engine(OptimizationLevel::None)
+            .create_jit_execution_engine(OptimizationLevel::Aggressive)
             .unwrap();
         let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> f64>("main") };
 
@@ -352,7 +351,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 panic!("{:?}", err);
             }
         };
-
         unsafe {
             compiled_fn.call();
         }
@@ -419,34 +417,47 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     panic!()
                 }
             }
-            crate::parser::StatementType::Free(_, Some(i)) => {
-                let mapptr = self.vars.get(i).unwrap();
-                let map = self.builder.build_load(*mapptr, "").into_pointer_value();
-                let keys = self
-                    .builder
-                    .build_struct_gep(map, MAP_KEYS, "keys_ptr")
-                    .unwrap();
-                self.builder
-                    .build_free(self.builder.build_load(keys, "keys").into_pointer_value());
-                let states = self
-                    .builder
-                    .build_struct_gep(map, MAP_STATES, "states_ptr")
-                    .unwrap();
-                self.builder.build_free(
-                    self.builder
-                        .build_load(states, "states")
-                        .into_pointer_value(),
-                );
-                let values = self
-                    .builder
-                    .build_struct_gep(map, MAP_VALUES, "values_ptr")
-                    .unwrap();
-                self.builder.build_free(
-                    self.builder
-                        .build_load(values, "values")
-                        .into_pointer_value(),
-                );
-                self.builder.build_free(map);
+            crate::parser::StatementType::Free(id, Some(i)) => {
+                let var = find_variable(id, scopeinfo.clone());
+                match var {
+                    Some((_, Type::Map(_, _), _, _)) => {
+                        let mapptr = self.vars.get(i).unwrap();
+                        let map = self.builder.build_load(*mapptr, "").into_pointer_value();
+                        let keys = self
+                            .builder
+                            .build_struct_gep(map, MAP_KEYS, "keys_ptr")
+                            .unwrap();
+                        self.builder
+                            .build_free(self.builder.build_load(keys, "keys").into_pointer_value());
+                        let states = self
+                            .builder
+                            .build_struct_gep(map, MAP_STATES, "states_ptr")
+                            .unwrap();
+                        self.builder.build_free(
+                            self.builder
+                                .build_load(states, "states")
+                                .into_pointer_value(),
+                        );
+                        let values = self
+                            .builder
+                            .build_struct_gep(map, MAP_VALUES, "values_ptr")
+                            .unwrap();
+                        self.builder.build_free(
+                            self.builder
+                                .build_load(values, "values")
+                                .into_pointer_value(),
+                        );
+                        self.builder.build_free(map);
+                    }
+					Some((_, Type::StructMap(_), _, _)) => {
+						let mapptr = self.vars.get(i).unwrap();
+                        let map = self.builder.build_load(*mapptr, "").into_pointer_value();
+						self.builder.build_free(map);
+					}
+                    _ => {
+                        panic!("map variable {id} not found")
+                    }
+                }
             }
             crate::parser::StatementType::If(ifpart, ifelsepart, elseblock) => {
                 let condblocks: Vec<_> = once_with(|| ifpart)
@@ -529,7 +540,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             if let Some(fv) = self.module.get_function(&fname) {
                 fv
             } else {
-                let initial_capacity: u32 = if Type::Unit.ne(k) { 16 } else { 1 };
+                let initial_capacity: u32 = if Type::Unit.eq(k) { 1 } else if Type::Bool.eq(k) {4} else{ 16 };
                 let fv = self.module.add_function(
                     &fname,
                     self.llvmfunctiontype(maptype, scopeinfo.clone(), &[], false),
@@ -1117,7 +1128,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     let fv = if let Some(fv) = self.module.get_function(&fname) {
                         fv
                     } else {
-                        let initial_capacity: u32 = if Type::Unit.ne(&k) { 16 } else { 1 };
+                        let initial_capacity: u32 = if Type::Unit.eq(&k) { 1 } else if Type::Bool.eq(&k) {4} else{ 16 };
                         let fv = self.module.add_function(
                             &fname,
                             self.llvmfunctiontype(
@@ -1854,9 +1865,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         "",
                     );
                     self.context.custom_width_int_type(0).const_zero().into()
-                }
-                functions::CLEAR => {
-                    todo!()
                 }
                 functions::GET => {
                     let index = idx.unwrap();
