@@ -34,7 +34,16 @@ pub fn valid_map_function<'a>(
     v: Type<'a>,
     args: &Vec<Type>,
     id: &str,
+	is_const: bool
 ) -> Result<Type<'a>, String> {
+	if is_const {
+		match id {
+			TOMBS | CLEAR | INSERT | REMOVE => {
+				return Err(format!("invalid function {id} for const map"))
+			}
+			_ =>{}
+		}
+	}
     let correctargs = get_map_args(&k, &v, id)?.eq(args);
     match id {
         SIZE | CAPACITY | TOMBS | CLEAR => {

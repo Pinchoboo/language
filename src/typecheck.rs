@@ -247,6 +247,21 @@ impl<'a> TypeCheckContext<'a> {
                                 .map(|e| self.check_expression(e, block.scopeinfo.clone(), None))
                                 .collect(),
                             id2,
+                            false,
+                        ) {
+                            panic!("{e}");
+                        }
+                    } else if let Some((_, Type::ConstMap(k, v), n, _)) = fv {
+                        *o = Some(n);
+                        if let Err(e) = functions::valid_map_function(
+                            *k,
+                            *v,
+                            &exprs
+                                .iter_mut()
+                                .map(|e| self.check_expression(e, block.scopeinfo.clone(), None))
+                                .collect(),
+                            id2,
+                            true,
                         ) {
                             panic!("{e}");
                         }
@@ -312,9 +327,9 @@ impl<'a> TypeCheckContext<'a> {
                         *o = Some(n);
                     } else if let Some((_, Type::StructMap(_), n, _)) = var {
                         *o = Some(n);
-                    }else{
-						panic!("could not find map {id}")
-					}
+                    } else {
+                        panic!("could not find map {id}")
+                    }
                 }
             }
         });
@@ -409,6 +424,22 @@ impl<'a> TypeCheckContext<'a> {
                             .map(|e| self.check_expression(e, scopeinfo.clone(), None))
                             .collect(),
                         id2,
+                        false,
+                    ) {
+                        Ok(t) => t,
+                        Err(e) => panic!("{e}"),
+                    }
+                } else if let Some((_, Type::ConstMap(k, v), n, _)) = fv {
+                    *o = Some(n);
+                    match functions::valid_map_function(
+                        *k,
+                        *v,
+                        &exprs
+                            .iter_mut()
+                            .map(|e| self.check_expression(e, scopeinfo.clone(), None))
+                            .collect(),
+                        id2,
+                        true,
                     ) {
                         Ok(t) => t,
                         Err(e) => panic!("{e}"),

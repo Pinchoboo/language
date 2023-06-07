@@ -15,9 +15,11 @@ flat hash set sse instructions 16 probe
 
 const <int,char> = "test"
 
-5. strings
+5. key equal fn
 6. hash maps
 7. hash loop
 8. optimise
+9. void in mapstruct
+10. custom hash function
 
 Type LETTER = A | B | C

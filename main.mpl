@@ -1,7 +1,6 @@
 fn int main(){
-	int a = 1234
-	const {int -> char} s = "hello"
-	printInt(1234)
-	printLn()
+	new {int -> int} k
+	new {{int -> int} -> int} m
+	m.getMaybe(k)
 	return 0
 }
