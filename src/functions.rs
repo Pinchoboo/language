@@ -69,7 +69,7 @@ pub fn valid_map_function<'a>(
         }
         REMOVE => {
             if correctargs {
-                Ok(Type::Unit)
+                Ok(Type::Bool)
             } else {
                 Err(format!("{REMOVE} takes {k} as argument "))
             }
@@ -119,7 +119,7 @@ pub fn valid_map_struct_function<'a>(
         }
         REMOVE => {
             if args.len() == 1 && args[0].is_err() {
-                return Ok(Type::Unit);
+                return Ok(Type::Bool);
             }
             
             Err(format!("{REMOVE} takes single key as argument "))

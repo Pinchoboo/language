@@ -1027,240 +1027,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         .build_call(self.mapinsert(&maptype, scopeinfo), &allargs, "");
                     self.context.custom_width_int_type(0).const_zero().into()
                 }
-                functions::GET => {
-                    let fname = format!("{}_get", &maptype);
-                    let fv = if let Some(fv) = self.module.get_function(&fname) {
-                        fv
-                    } else {
-                        const MAP_PARAM: u32 = 0;
-                        const KEY_PARAM: u32 = 1;
-                        let param_types = if Type::Unit.ne(&k) {
-                            vec![llvmmaptype.into(), llvmkeytype.into()]
-                        } else {
-                            vec![llvmmaptype.into()]
-                        };
-                        let fv = self.module.add_function(
-                            &fname,
-                            self.llvmfunctiontype(&v, scopeinfo.clone(), &param_types, false),
-                            None,
-                        );
-                        let call_block = self.builder.get_insert_block().unwrap();
-                        self.builder
-                            .position_at_end(self.context.append_basic_block(fv, "entry"));
-                        /*
-                        get(map, k) {
-                            IF V == UNIT {
-                                return
-                            }
-                            IF K == UNIT {
-                                return map.values[0]
-                            }
-                            i = hash(k) % map.capacity
-                            while map.state[i] != FREE {
-                                if map.state[i] == TAKEN && map.keys[i] == k {
-                                    return map.values[i]
-                                }
-                                i = (i + 1) % map.capacity
-                            }
-                            return null
-                        }
-                        */
-
-                        if Type::Unit.eq(&v) {
-                            self.builder.build_return(None);
-                        } else if Type::Unit.eq(&k) {
-                            self.builder.build_return(Some(&self.builder.build_load(
-                                unsafe {
-                                    self.builder.build_gep(
-                                        self.builder
-                                            .build_load(
-                                                self.builder
-                                                    .build_struct_gep(
-                                                        fv.get_nth_param(MAP_PARAM)
-                                                            .unwrap()
-                                                            .into_pointer_value(),
-                                                        map_values(&k),
-                                                        &(id.to_string() + ".values.ptr"),
-                                                    )
-                                                    .unwrap(),
-                                                "values",
-                                            )
-                                            .into_pointer_value(),
-                                        &[self.context.i64_type().const_zero()],
-                                        "",
-                                    )
-                                },
-                                "",
-                            )));
-                        } else {
-                            let hash = self
-                                .builder
-                                .build_call(
-                                    self.hash(&k, scopeinfo.clone()),
-                                    &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
-                                    "",
-                                )
-                                .try_as_basic_value()
-                                .unwrap_left();
-                            let capacity = self.builder.build_load(
-                                self.builder
-                                    .build_struct_gep(
-                                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                        MAP_CAPACITY,
-                                        &(id.to_string() + ".capacity.ptr"),
-                                    )
-                                    .unwrap(),
-                                "capacity",
-                            );
-
-                            let states = self.builder.build_load(
-                                self.builder
-                                    .build_struct_gep(
-                                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                        MAP_STATES,
-                                        &(id.to_string() + ".states.ptr"),
-                                    )
-                                    .unwrap(),
-                                "states",
-                            );
-
-                            let keys = self.builder.build_load(
-                                self.builder
-                                    .build_struct_gep(
-                                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                        MAP_KEYS,
-                                        &(id.to_string() + ".keys.ptr"),
-                                    )
-                                    .unwrap(),
-                                "keys",
-                            );
-
-                            let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
-                            self.builder.build_store(
-                                idx,
-                                self.builder.build_int_unsigned_rem(
-                                    hash.into_int_value(),
-                                    capacity.into_int_value(),
-                                    "",
-                                ),
-                            );
-
-                            let whilecond = self.context.append_basic_block(fv, "whilecond");
-                            let whilebody = self.context.append_basic_block(fv, "whilebody");
-                            let afterwhile = self.context.append_basic_block(fv, "afterwhile");
-
-                            self.builder.build_unconditional_branch(whilecond);
-                            self.builder.position_at_end(whilecond);
-
-                            let state = unsafe {
-                                self.builder.build_gep(
-                                    states.into_pointer_value(),
-                                    &[self.builder.build_load(idx, "").into_int_value()],
-                                    "",
-                                )
-                            };
-
-                            let key = unsafe {
-                                self.builder.build_gep(
-                                    keys.into_pointer_value(),
-                                    &[self.builder.build_load(idx, "").into_int_value()],
-                                    "",
-                                )
-                            };
-
-                            self.builder.build_conditional_branch(
-                                self.builder.build_int_compare(
-                                    IntPredicate::NE,
-                                    self.builder.build_load(state, "state_idx").into_int_value(),
-                                    self.context.i64_type().const_int(STATE_FREE, false),
-                                    "is_not_state_free",
-                                ),
-                                whilebody,
-                                afterwhile,
-                            );
-                            self.builder.position_at_end(whilebody);
-
-                            //if
-                            let ifbody = self.context.append_basic_block(fv, "ifbody");
-                            let afterif = self.context.append_basic_block(fv, "afterif");
-                            let keyidx = self.builder.build_load(key, "key_idx").into_int_value();
-                            self.builder.build_conditional_branch(
-                                self.builder.build_and(
-                                    self.builder.build_int_compare(
-                                        IntPredicate::EQ,
-                                        self.builder
-                                            .build_load(state, "state_idx")
-                                            .into_int_value(),
-                                        self.context.i64_type().const_int(STATE_TAKEN, false),
-                                        "is_state_taken",
-                                    ),
-                                    self.builder
-                                        .build_call(
-                                            self.equal(&k, scopeinfo.clone()),
-                                            &[
-                                                keyidx.into(),
-                                                fv.get_nth_param(KEY_PARAM).unwrap().into(),
-                                            ],
-                                            "is_key_equal",
-                                        )
-                                        .try_as_basic_value()
-                                        .unwrap_left()
-                                        .into_int_value(),
-                                    "ifcond",
-                                ),
-                                ifbody,
-                                afterif,
-                            );
-                            self.builder.position_at_end(ifbody);
-                            self.builder.build_return(Some(&self.builder.build_load(
-                                unsafe {
-                                    self.builder.build_gep(
-                                        self.builder
-                                            .build_load(
-                                                self.builder
-                                                    .build_struct_gep(
-                                                        fv.get_nth_param(MAP_PARAM)
-                                                            .unwrap()
-                                                            .into_pointer_value(),
-                                                        map_values(&k),
-                                                        &(id.to_string() + ".values.ptr"),
-                                                    )
-                                                    .unwrap(),
-                                                "values",
-                                            )
-                                            .into_pointer_value(),
-                                        &[self.builder.build_load(idx, "").into_int_value()],
-                                        "",
-                                    )
-                                },
-                                "",
-                            )));
-                            self.builder.position_at_end(afterif);
-
-                            self.builder.build_store(
-                                idx,
-                                self.builder.build_int_add(
-                                    self.builder.build_load(idx, "").into_int_value(),
-                                    self.context.i64_type().const_int(1, false),
-                                    "",
-                                ),
-                            );
-                            self.builder.build_unconditional_branch(whilecond);
-
-                            self.builder.position_at_end(afterwhile);
-                            self.emit_printf_call(&"KEY NOT IN MAP\n", &[]);
-                            self.builder.build_return(Some(
-                                &self.llvmtype(&Type::Int, scopeinfo).const_zero(),
-                            ));
-                        }
-                        self.builder.position_at_end(call_block);
-                        fv
-                    };
-                    self.builder
-                        .build_call(fv, &allargs, "")
-                        .try_as_basic_value()
-                        .unwrap_left()
-                }
+                functions::GET => self
+                    .builder
+                    .build_call(
+                        self.mapget(&maptype, &v, &k, llvmmaptype, llvmkeytype, scopeinfo),
+                        &allargs,
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left(),
                 functions::CLEAR => {
                     /*
                     clear(map) {
@@ -1301,6 +1076,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             .position_at_end(self.context.append_basic_block(fv, "entry"));
 
                         let map = fv.get_nth_param(0).unwrap().into_pointer_value();
+
                         self.builder.build_store(
                             self.builder
                                 .build_struct_gep(map, MAP_CAPACITY, "capacity")
@@ -1395,8 +1171,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                                 map.size = map.size - 1
                                 map.tombs = map.tombs + 1
                                 map.states[0] = TOMB
+                                return true
                             }
-                            return
+                            return false
                         }
 
                         i = hash(k) % map.capacity
@@ -1408,11 +1185,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                                 map.states[i] = TOMB
                                 map.tombs = map.tombs + 1
                                 map.size = map.size - 1
-                                return null
+                                return true
                             }
                             i = (i + 1) % map.capacity
                         }
-                        return null
+                        return false
                     }
                     */
                     let fname = format!("{}_remove", &maptype);
@@ -1429,7 +1206,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         let fv = self.module.add_function(
                             &fname,
                             self.llvmfunctiontype(
-                                &Type::Unit,
+                                &Type::Bool,
                                 scopeinfo.clone(),
                                 &param_types,
                                 false,
@@ -1510,7 +1287,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                                 },
                                 self.context.i64_type().const_int(STATE_TOMB, false),
                             );
-                            self.builder.build_unconditional_branch(afterif);
+                            self.builder
+                                .build_return(Some(&self.context.bool_type().const_all_ones()));
                             self.builder.position_at_end(afterif)
                         } else {
                             let hashargs = if Type::Unit.ne(&k) {
@@ -1655,305 +1433,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                                 ),
                             );
 
-                            self.builder.build_return(None);
-                            self.builder.position_at_end(afterif);
-
-                            self.builder.build_store(
-                                idx,
-                                self.builder.build_int_add(
-                                    self.builder.build_load(idx, "").into_int_value(),
-                                    self.context.i64_type().const_int(1, false),
-                                    "",
-                                ),
-                            );
-                            self.builder.build_unconditional_branch(whilecond);
-
-                            self.builder.position_at_end(afterwhile);
-                            self.emit_printf_call(&"KEY NOT IN MAP\n", &[]);
-                        }
-                        self.builder.build_return(None);
-                        self.builder.position_at_end(call_block);
-                        fv
-                    };
-                    self.builder.build_call(fv, &allargs, "");
-                    self.context.custom_width_int_type(0).const_zero().into()
-                }
-                functions::GET_MAYBE => {
-                    let fname = format!("{}_get_maybe", &maptype);
-                    let fv = if let Some(fv) = self.module.get_function(&fname) {
-                        fv
-                    } else {
-                        const MAP_PARAM: u32 = 0;
-                        const KEY_PARAM: u32 = 1;
-                        let returntype = Type::Map(Box::new(Type::Unit), v.clone());
-                        let param_types = if Type::Unit.ne(&k) {
-                            vec![llvmmaptype.into(), llvmkeytype.into()]
-                        } else {
-                            vec![llvmmaptype.into()]
-                        };
-                        let fv = self.module.add_function(
-                            &fname,
-                            self.llvmfunctiontype(
-                                &returntype,
-                                scopeinfo.clone(),
-                                &param_types,
-                                false,
-                            ),
-                            None,
-                        );
-                        let call_block = self.builder.get_insert_block().unwrap();
-                        self.builder
-                            .position_at_end(self.context.append_basic_block(fv, "entry"));
-                        /*
-                        getMaybe(map, k) {
-                            i = hash(k) % map.capacity
-                            returnval = new <void,V>
-                            IF K == UNIT {
-                                if map.size == 1 {
-                                    returnval.insert(map.values[0])
-                                }
-                                return returval
-                            }
-                            while map.state[i] != FREE {
-                                if map.state[i] == TAKEN && map.keys[i] == k {
-                                    returnval.insert(map.values[i])
-                                    break
-                                }
-                                i = (i + 1) % map.capacity
-                            }
-                            return returnval
-                        }
-                        */
-                        let returnvalptr = self.builder.build_alloca(
-                            self.llvmtype(&returntype, scopeinfo.clone()),
-                            "returnvalptr",
-                        );
-                        self.builder.build_store(
-                            returnvalptr,
                             self.builder
-                                .build_call(self.mapcreate(&returntype, scopeinfo.clone()), &[], "")
-                                .try_as_basic_value()
-                                .unwrap_left(),
-                        );
-                        let returnval = self.builder.build_load(returnvalptr, "returnval");
-
-                        if Type::Unit.eq(&k) {
-                            let sizeptr = self
-                                .builder
-                                .build_struct_gep(
-                                    fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                    MAP_SIZE,
-                                    &(id.to_string() + ".size.ptr"),
-                                )
-                                .unwrap();
-                            let size = self.builder.build_load(sizeptr, "size");
-
-                            let ifbody = self.context.append_basic_block(fv, "ifbody");
-                            let afterif = self.context.append_basic_block(fv, "afterif");
-                            self.builder.build_conditional_branch(
-                                self.builder.build_int_compare(
-                                    IntPredicate::EQ,
-                                    size.into_int_value(),
-                                    self.context.i64_type().const_int(1, false),
-                                    "",
-                                ),
-                                ifbody,
-                                afterif,
-                            );
-                            self.builder.position_at_end(ifbody);
-
-                            let insertargs = if Type::Unit.ne(&v) {
-                                let value = self.builder.build_load(
-                                    unsafe {
-                                        self.builder.build_gep(
-                                            self.builder
-                                                .build_load(
-                                                    self.builder
-                                                        .build_struct_gep(
-                                                            fv.get_nth_param(MAP_PARAM)
-                                                                .unwrap()
-                                                                .into_pointer_value(),
-                                                            map_values(&k),
-                                                            &(id.to_string() + ".values.ptr"),
-                                                        )
-                                                        .unwrap(),
-                                                    "values",
-                                                )
-                                                .into_pointer_value(),
-                                            &[self.context.i64_type().const_zero()],
-                                            "value_0ptr",
-                                        )
-                                    },
-                                    "value_0",
-                                );
-                                vec![returnval.into(), value.into()]
-                            } else {
-                                vec![returnval.into()]
-                            };
-                            self.builder.build_call(
-                                self.mapinsert(&returntype, scopeinfo.clone()),
-                                &insertargs,
-                                "",
-                            );
-
-                            self.builder.build_unconditional_branch(afterif);
-                            self.builder.position_at_end(afterif)
-                        } else {
-                            let hash = self
-                                .builder
-                                .build_call(
-                                    self.hash(&k, scopeinfo.clone()),
-                                    &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
-                                    "",
-                                )
-                                .try_as_basic_value()
-                                .unwrap_left();
-
-                            let capacity = self.builder.build_load(
-                                self.builder
-                                    .build_struct_gep(
-                                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                        MAP_CAPACITY,
-                                        &(id.to_string() + ".capacity.ptr"),
-                                    )
-                                    .unwrap(),
-                                "capacity",
-                            );
-
-                            let states = self.builder.build_load(
-                                self.builder
-                                    .build_struct_gep(
-                                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                        MAP_STATES,
-                                        &(id.to_string() + ".states.ptr"),
-                                    )
-                                    .unwrap(),
-                                "states",
-                            );
-
-                            let keys = self.builder.build_load(
-                                self.builder
-                                    .build_struct_gep(
-                                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
-                                        MAP_KEYS,
-                                        &(id.to_string() + ".keys.ptr"),
-                                    )
-                                    .unwrap(),
-                                "keys",
-                            );
-
-                            let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
-                            self.builder.build_store(
-                                idx,
-                                self.builder.build_int_unsigned_rem(
-                                    hash.into_int_value(),
-                                    capacity.into_int_value(),
-                                    "",
-                                ),
-                            );
-
-                            let whilecond = self.context.append_basic_block(fv, "whilecond");
-                            let whilebody = self.context.append_basic_block(fv, "whilebody");
-                            let afterwhile = self.context.append_basic_block(fv, "afterwhile");
-
-                            self.builder.build_unconditional_branch(whilecond);
-                            self.builder.position_at_end(whilecond);
-
-                            let state = unsafe {
-                                self.builder.build_gep(
-                                    states.into_pointer_value(),
-                                    &[self.builder.build_load(idx, "").into_int_value()],
-                                    "",
-                                )
-                            };
-
-                            let key = unsafe {
-                                self.builder.build_gep(
-                                    keys.into_pointer_value(),
-                                    &[self.builder.build_load(idx, "").into_int_value()],
-                                    "",
-                                )
-                            };
-
-                            self.builder.build_conditional_branch(
-                                self.builder.build_int_compare(
-                                    IntPredicate::NE,
-                                    self.builder.build_load(state, "state_idx").into_int_value(),
-                                    self.context.i64_type().const_int(STATE_FREE, false),
-                                    "is_not_state_free",
-                                ),
-                                whilebody,
-                                afterwhile,
-                            );
-                            self.builder.position_at_end(whilebody);
-
-                            //if
-                            let ifbody = self.context.append_basic_block(fv, "ifbody");
-                            let afterif = self.context.append_basic_block(fv, "afterif");
-                            let keyidx = self.builder.build_load(key, "key_idx");
-                            self.builder.build_conditional_branch(
-                                self.builder.build_and(
-                                    self.builder.build_int_compare(
-                                        IntPredicate::EQ,
-                                        self.builder
-                                            .build_load(state, "state_idx")
-                                            .into_int_value(),
-                                        self.context.i64_type().const_int(STATE_TAKEN, false),
-                                        "is_state_taken",
-                                    ),
-                                    self.builder
-                                        .build_call(
-                                            self.equal(&k, scopeinfo.clone()),
-                                            &[
-                                                keyidx.into(),
-                                                fv.get_nth_param(KEY_PARAM).unwrap().into(),
-                                            ],
-                                            "is_key_equal",
-                                        )
-                                        .try_as_basic_value()
-                                        .unwrap_left()
-                                        .into_int_value(),
-                                    "ifcond",
-                                ),
-                                ifbody,
-                                afterif,
-                            );
-                            self.builder.position_at_end(ifbody);
-                            let insertargs = if Type::Unit.ne(&v) {
-                                let value = self.builder.build_load(
-                                    unsafe {
-                                        self.builder.build_gep(
-                                            self.builder
-                                                .build_load(
-                                                    self.builder
-                                                        .build_struct_gep(
-                                                            fv.get_nth_param(MAP_PARAM)
-                                                                .unwrap()
-                                                                .into_pointer_value(),
-                                                            map_values(&k),
-                                                            &(id.to_string() + ".values.ptr"),
-                                                        )
-                                                        .unwrap(),
-                                                    "values",
-                                                )
-                                                .into_pointer_value(),
-                                            &[self.builder.build_load(idx, "").into_int_value()],
-                                            "",
-                                        )
-                                    },
-                                    "",
-                                );
-                                vec![returnval.into(), value.into()]
-                            } else {
-                                vec![returnval.into()]
-                            };
-                            self.builder.build_call(
-                                self.mapinsert(&returntype, scopeinfo.clone()),
-                                &insertargs,
-                                "",
-                            );
-
-                            self.builder.build_unconditional_branch(afterwhile);
+                                .build_return(Some(&self.context.bool_type().const_all_ones()));
                             self.builder.position_at_end(afterif);
 
                             self.builder.build_store(
@@ -1968,7 +1449,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
 
                             self.builder.position_at_end(afterwhile);
                         }
-                        self.builder.build_return(Some(&returnval));
+                        self.builder
+                            .build_return(Some(&self.context.bool_type().const_zero()));
                         self.builder.position_at_end(call_block);
                         fv
                     };
@@ -1977,6 +1459,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         .try_as_basic_value()
                         .unwrap_left()
                 }
+                functions::GET_MAYBE => self
+                    .builder
+                    .build_call(
+                        self.get_maybe(&maptype, &v, &k, llvmmaptype, llvmkeytype, scopeinfo),
+                        &allargs,
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left(),
                 _ => {
                     panic!("unreachable")
                 }
@@ -3076,21 +2567,167 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
             match t {
-                Type::Map(_k, _v) => {
+                Type::Map(k, v) => {
                     /*
-                    hashMap(map){
-                        int h = 0
-                        int idx = 0
-                        while idx < map.capacity {
-                            if map.state[idx] == TAKEN {
-                                h = h + hash(map.keys[idx]) + hash(map.values[idx])
-                            }
-                            idx = idx + 1
-                        }
-                        return hash
+                    int h = 0
+                    int idx = 0
+                    while idx < map.capacity {
+                        if map.state[idx] == TAKEN {
+                            h = h + hash(map.keys[idx]) + hash(map.values[idx])
+                           }
+                        idx = idx + 1
                     }
-                     */
-                    todo!()
+                    return hash
+
+                    */
+                    let h = self.builder.build_alloca(self.context.i64_type(), "h");
+                    self.builder
+                        .build_store(h, self.context.i64_type().const_zero());
+                    let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                    self.builder
+                        .build_store(idx, self.context.i64_type().const_zero());
+                    let map = fv.get_first_param().unwrap().into_pointer_value();
+                    let capacity = self
+                        .builder
+                        .build_load(
+                            self.builder
+                                .build_struct_gep(map, MAP_CAPACITY, "map.capacity.ptr")
+                                .unwrap(),
+                            "capacity",
+                        )
+                        .into_int_value();
+
+                    let mapstates = self
+                        .builder
+                        .build_load(
+                            self.builder
+                                .build_struct_gep(map, MAP_STATES, "map.states.ptr")
+                                .unwrap(),
+                            "map.states",
+                        )
+                        .into_pointer_value();
+                    let mapkeys = self
+                        .builder
+                        .build_load(
+                            self.builder
+                                .build_struct_gep(map, MAP_STATES, "map.keys.ptr")
+                                .unwrap(),
+                            "map.keys",
+                        )
+                        .into_pointer_value();
+                    let mapvalues = self
+                        .builder
+                        .build_load(
+                            self.builder
+                                .build_struct_gep(map, MAP_STATES, "map.values.ptr")
+                                .unwrap(),
+                            "map.values",
+                        )
+                        .into_pointer_value();
+
+                    let whilecond = self.context.append_basic_block(fv, "whilecond");
+                    let whilebody = self.context.append_basic_block(fv, "whilebody");
+                    let afterwhile = self.context.append_basic_block(fv, "afterwhile");
+                    self.builder.build_unconditional_branch(whilecond);
+                    self.builder.position_at_end(whilecond);
+                    let idxval = self.builder.build_load(idx, "").into_int_value();
+                    self.builder.build_conditional_branch(
+                        self.builder
+                            .build_int_compare(IntPredicate::ULT, idxval, capacity, ""),
+                        whilebody,
+                        afterwhile,
+                    );
+                    let ifbody = self.context.append_basic_block(fv, "ifbody");
+                    let afterif = self.context.append_basic_block(fv, "afterif");
+                    self.builder.position_at_end(whilebody);
+                    self.builder.build_conditional_branch(
+                        self.builder.build_int_compare(
+                            IntPredicate::EQ,
+                            self.builder
+                                .build_load(
+                                    unsafe { self.builder.build_gep(mapstates, &[idxval], "") },
+                                    "map.states_i",
+                                )
+                                .into_int_value(),
+                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            "is_state_taken",
+                        ),
+                        ifbody,
+                        afterif,
+                    );
+                    self.builder.position_at_end(ifbody);
+                    let vh = self
+                        .builder
+                        .build_call(
+                            self.hash(v, scopeinfo.clone()),
+                            &{
+                                if Type::Unit.eq(v) {
+                                    vec![]
+                                } else {
+                                    vec![self
+                                        .builder
+                                        .build_load(
+                                            unsafe {
+                                                self.builder.build_gep(mapvalues, &[idxval], "")
+                                            },
+                                            "map.values_i",
+                                        )
+                                        .into()]
+                                }
+                            },
+                            "value_i_hash",
+                        )
+                        .try_as_basic_value()
+                        .unwrap_left();
+                    let kh = self
+                        .builder
+                        .build_call(
+                            self.hash(k, scopeinfo.clone()),
+                            &{
+                                if Type::Unit.eq(k) {
+                                    vec![]
+                                } else {
+                                    vec![self
+                                        .builder
+                                        .build_load(
+                                            unsafe {
+                                                self.builder.build_gep(mapkeys, &[idxval], "")
+                                            },
+                                            "map.keys_i",
+                                        )
+                                        .into()]
+                                }
+                            },
+                            "key_i_hash",
+                        )
+                        .try_as_basic_value()
+                        .unwrap_left();
+                    self.builder.build_store(
+                        h,
+                        self.builder.build_int_add(
+                            self.builder.build_load(h, "").into_int_value(),
+                            self.builder.build_int_add(
+                                vh.into_int_value(),
+                                kh.into_int_value(),
+                                "",
+                            ),
+                            "",
+                        ),
+                    );
+                    self.builder.build_unconditional_branch(afterif);
+                    self.builder.position_at_end(afterif);
+                    self.builder.build_store(
+                        idx,
+                        self.builder.build_int_add(
+                            idxval,
+                            self.context.i64_type().const_int(1, false),
+                            "",
+                        ),
+                    );
+                    self.builder.build_unconditional_branch(whilecond);
+                    self.builder.position_at_end(afterwhile);
+                    self.builder
+                        .build_return(Some(&self.builder.build_load(h, "")));
                 }
                 Type::StructMap(_t) => {
                     /*
@@ -3249,7 +2886,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     "",
                 );
 
-                self.emit_printf_call(&"REHASHING %d\n", &[newcap.into()]);
+                //self.emit_printf_call(&"REHASHING %d\n", &[newcap.into()]);
 
                 let newkeys = self
                     .builder
@@ -3527,13 +3164,16 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             fn mapstructremove<K>(v){
                 if map.states[i] == TAKEN {
                     map.size = map.size - 1
+                    map.states[i] = FREE
+                    return true
                 }
-                map.states[i] = FREE
+                return false
+
             }
             */
             let fv = self.module.add_function(
                 &fname,
-                self.llvmfunctiontype(&Type::Unit, scopeinfo.clone(), &params, false),
+                self.llvmfunctiontype(&Type::Bool, scopeinfo.clone(), &params, false),
                 None,
             );
             let call_block = self.builder.get_insert_block().unwrap();
@@ -3590,12 +3230,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     "",
                 ),
             );
-            self.builder.build_unconditional_branch(afterif);
-            self.builder.position_at_end(afterif);
             self.builder
                 .build_store(flagi, self.context.bool_type().const_zero());
+            self.builder
+                .build_return(Some(&self.context.bool_type().const_all_ones()));
+            self.builder.position_at_end(afterif);
 
-            self.builder.build_return(None);
+            self.builder
+                .build_return(Some(&self.context.bool_type().const_zero()));
             self.builder.position_at_end(call_block);
             fv
         } else {
@@ -3605,7 +3247,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
 
     fn equal(&mut self, t: &Type<'b>, scopeinfo: Rc<RefCell<ScopeInfo<'b>>>) -> FunctionValue {
         let s = format!("equal_{t}");
-        println!("{s}");
         let fv = if let Some(fv) = self.module.get_function(&s) {
             fv
         } else {
@@ -3648,7 +3289,259 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             "eq",
                         )));
                 }
-                Type::Map(_k, _v) => todo!(),
+                Type::Map(k, v) => {
+                    /*
+                        mapequal(a,b){
+                            if a.size() != b.size() {
+                                return false
+                            }
+                            while idx < a.size() {
+                                if a.states[idx] == taken{
+                                    {void -> V } r = b.getMaybe(k)
+                                    if r.size() == 0 {
+                                        return false
+                                    }
+                                    if r.get() != v {
+                                        return false
+                                    }
+                                }
+                                idx += 1
+                            }
+
+                            return true
+                        }
+                    */
+                    let a = fv.get_nth_param(0).unwrap().into_pointer_value();
+                    let b = fv.get_nth_param(1).unwrap().into_pointer_value();
+
+                    let ifbody = self.context.append_basic_block(fv, "ifbody");
+                    let afterif = self.context.append_basic_block(fv, "afterif");
+                    self.builder.build_conditional_branch(
+                        self.builder.build_int_compare(
+                            IntPredicate::NE,
+                            self.builder
+                                .build_load(
+                                    self.builder.build_struct_gep(a, MAP_SIZE, "size").unwrap(),
+                                    "",
+                                )
+                                .into_int_value(),
+                            self.builder
+                                .build_load(
+                                    self.builder.build_struct_gep(b, MAP_SIZE, "size").unwrap(),
+                                    "",
+                                )
+                                .into_int_value(),
+                            "",
+                        ),
+                        ifbody,
+                        afterif,
+                    );
+                    self.builder.position_at_end(ifbody);
+                    //self.emit_printf_call(&"NOT EQUAL\n", &[]);
+                    self.builder
+                        .build_return(Some(&self.context.bool_type().const_zero()));
+                    self.builder.position_at_end(afterif);
+                    //self.emit_printf_call(&"PASS SIZE CHECK\n", &[]);
+                    let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                    self.builder
+                        .build_store(idx, self.context.i64_type().const_zero());
+
+                    let a_capacity = self
+                        .builder
+                        .build_load(
+                            self.builder
+                                .build_struct_gep(a, MAP_CAPACITY, "capacity")
+                                .unwrap(),
+                            "",
+                        )
+                        .into_int_value();
+                    let states = self
+                        .builder
+                        .build_load(
+                            self.builder
+                                .build_struct_gep(a, MAP_STATES, "map.states.ptr")
+                                .unwrap(),
+                            "states",
+                        )
+                        .into_pointer_value();
+
+                    let whilecond = self.context.append_basic_block(fv, "whilecond");
+                    let whilebody = self.context.append_basic_block(fv, "whilebody");
+                    let afterwhile = self.context.append_basic_block(fv, "afterwhile");
+                    self.builder.build_unconditional_branch(whilecond);
+                    self.builder.position_at_end(whilecond);
+                    let idxval = self.builder.build_load(idx, "").into_int_value();
+                    //self.emit_printf_call(&"idx:%d\n", &[idxval.into()]);
+                    self.builder.build_conditional_branch(
+                        self.builder
+                            .build_int_compare(IntPredicate::ULT, idxval, a_capacity, ""),
+                        whilebody,
+                        afterwhile,
+                    );
+                    self.builder.position_at_end(whilebody);
+                    let validentry = self.context.append_basic_block(fv, "validentry");
+                    let afterifa = self.context.append_basic_block(fv, "afterifa");
+                    let afterifb = self.context.append_basic_block(fv, "afterifb");
+                    let aftervalid = self.context.append_basic_block(fv, "aftervalid");
+
+                    let stateidx = self.builder.build_load(
+                        unsafe { self.builder.build_gep(states, &[idxval], "") },
+                        "state_idx",
+                    );
+
+                    self.builder.build_conditional_branch(
+                        self.builder.build_int_compare(
+                            IntPredicate::EQ,
+                            stateidx.into_int_value(),
+                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            "is_taken",
+                        ),
+                        validentry,
+                        aftervalid,
+                    );
+                    self.builder.position_at_end(validentry);
+                    //self.emit_printf_call(&"is valid\n", &[]);
+                    
+                    let llvmmaptype =
+                        self.llvmtype(&Type::Map(k.clone(), v.clone()), scopeinfo.clone());
+                    let llvmkeytype = self.llvmtype(k, scopeinfo.clone());
+					let getmaybeargs = if Type::Unit.eq(k){
+						vec![b.into()]
+					}else{
+						let keyidx = self.builder.build_load(
+							unsafe {
+								self.builder.build_gep(
+									self.builder
+										.build_load(
+											self.builder
+												.build_struct_gep(a, MAP_KEYS, "map.keys.ptr")
+												.unwrap(),
+											"keys",
+										)
+										.into_pointer_value(),
+									&[idxval],
+									"",
+								)
+							},
+							"key_idx",
+						);
+						vec![b.into(), keyidx.into()]
+					};
+					
+
+                    let r = self
+                        .builder
+                        .build_call(
+                            self.get_maybe(
+                                &Type::Map(Box::new(Type::Unit), v.clone()),
+                                v,
+                                k,
+                                llvmmaptype,
+                                llvmkeytype,
+                                scopeinfo.clone(),
+                            ),
+                            &getmaybeargs,
+                            "r",
+                        )
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_pointer_value();
+
+                    let rsize = self
+                        .builder
+                        .build_load(
+                            self.builder
+                                .build_struct_gep(r, MAP_SIZE, "r.size.ptr")
+                                .unwrap(),
+                            "r.size",
+                        )
+                        .into_int_value();
+                    //self.emit_printf_call(&"key match: %d \n", &[rsize.into()]);
+                    self.builder.build_conditional_branch(
+                        self.builder.build_int_compare(
+                            IntPredicate::EQ,
+                            rsize,
+                            self.context.i64_type().const_zero(),
+                            "",
+                        ),
+                        ifbody,
+                        afterifa,
+                    );
+                    self.builder.position_at_end(afterifa);
+
+                    let mapvoidtoval = self.llvmtype(
+                        &Type::Map(Box::new(Type::Unit), v.clone()),
+                        scopeinfo.clone(),
+                    );
+                    
+                    //self.emit_printf_call(&"key val: %d \n", &[rget.into()]);
+					if Type::Unit.ne(v) {
+						let rget = self
+                        .builder
+                        .build_call(
+                            self.mapget(
+                                &Type::Map(Box::new(Type::Unit), v.clone()),
+                                v,
+                                &Type::Unit,
+                                mapvoidtoval,
+                                self.context.custom_width_int_type(0).into(),
+                                scopeinfo.clone(),
+                            ),
+                            &[r.into()],
+                            "",
+                        )
+                        .try_as_basic_value()
+                        .unwrap_left();
+						let valueidx = self.builder.build_load(
+							unsafe {
+								self.builder.build_gep(
+									self.builder
+										.build_load(
+											self.builder
+												.build_struct_gep(a, map_values(&k), "map.values.ptr")
+												.unwrap(),
+											"values",
+										)
+										.into_pointer_value(),
+									&[idxval],
+									"",
+								)
+							},
+							"value_idx",
+						);
+						self.builder.build_conditional_branch(
+							self.builder
+								.build_call(
+									self.equal(&v, scopeinfo.clone()),
+									&[rget.into(), valueidx.into()],
+									"",
+								)
+								.try_as_basic_value()
+								.unwrap_left()
+								.into_int_value(),
+							afterifb,
+							ifbody,
+						);
+					}else {
+						self.builder.build_unconditional_branch(afterifb);
+					}
+					
+                    self.builder.position_at_end(afterifb);
+                    self.builder.build_unconditional_branch(aftervalid);
+                    self.builder.position_at_end(aftervalid);
+                    self.builder.build_store(
+                        idx,
+                        self.builder.build_int_add(
+                            idxval,
+                            self.context.i64_type().const_int(1, false),
+                            "",
+                        ),
+                    );
+                    self.builder.build_unconditional_branch(whilecond);
+                    self.builder.position_at_end(afterwhile);
+                    self.builder
+                        .build_return(Some(&self.context.bool_type().const_all_ones()));
+                }
                 Type::ConstMap(_k, _v) => todo!(),
                 Type::StructMap(_t) => todo!(),
             }
@@ -3656,6 +3549,550 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             if let Some(bb) = call_block {
                 self.builder.position_at_end(bb);
             }
+            fv
+        };
+        fv
+    }
+
+    fn mapget(
+        &mut self,
+        maptype: &Type<'b>,
+        v: &Type<'b>,
+        k: &Type<'b>,
+        llvmmaptype: BasicTypeEnum<'ctx>,
+        llvmkeytype: BasicTypeEnum<'ctx>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+    ) -> FunctionValue<'ctx> {
+        let fname = format!("{}_get", &maptype);
+        let fv = if let Some(fv) = self.module.get_function(&fname) {
+            fv
+        } else {
+            const MAP_PARAM: u32 = 0;
+            const KEY_PARAM: u32 = 1;
+            let param_types = if Type::Unit.ne(&k) {
+                vec![llvmmaptype.into(), llvmkeytype.into()]
+            } else {
+                vec![llvmmaptype.into()]
+            };
+            let fv = self.module.add_function(
+                &fname,
+                self.llvmfunctiontype(&v, scopeinfo.clone(), &param_types, false),
+                None,
+            );
+            let call_block = self.builder.get_insert_block().unwrap();
+            self.builder
+                .position_at_end(self.context.append_basic_block(fv, "entry"));
+            /*
+            get(map, k) {
+                IF V == UNIT {
+                    return
+                }
+                IF K == UNIT {
+                    return map.values[0]
+                }
+                i = hash(k) % map.capacity
+                while map.state[i] != FREE {
+                    if map.state[i] == TAKEN && map.keys[i] == k {
+                        return map.values[i]
+                    }
+                    i = (i + 1) % map.capacity
+                }
+                return null
+            }
+            */
+
+            if Type::Unit.eq(&v) {
+                self.builder.build_return(None);
+            } else if Type::Unit.eq(&k) {
+                self.builder.build_return(Some(&self.builder.build_load(
+                    unsafe {
+                        self.builder.build_gep(
+                            self.builder
+                                .build_load(
+                                    self.builder
+                                        .build_struct_gep(
+                                            fv.get_nth_param(MAP_PARAM)
+                                                .unwrap()
+                                                .into_pointer_value(),
+                                            map_values(&k),
+                                            &("map.values.ptr"),
+                                        )
+                                        .unwrap(),
+                                    "values",
+                                )
+                                .into_pointer_value(),
+                            &[self.context.i64_type().const_zero()],
+                            "",
+                        )
+                    },
+                    "",
+                )));
+            } else {
+                let hash = self
+                    .builder
+                    .build_call(
+                        self.hash(&k, scopeinfo.clone()),
+                        &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left();
+                let capacity = self.builder.build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            MAP_CAPACITY,
+                            &("map.capacity.ptr"),
+                        )
+                        .unwrap(),
+                    "capacity",
+                );
+
+                let states = self.builder.build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            MAP_STATES,
+                            &("map.states.ptr"),
+                        )
+                        .unwrap(),
+                    "states",
+                );
+
+                let keys = self.builder.build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            MAP_KEYS,
+                            &("map.keys.ptr"),
+                        )
+                        .unwrap(),
+                    "keys",
+                );
+
+                let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                self.builder.build_store(
+                    idx,
+                    self.builder.build_int_unsigned_rem(
+                        hash.into_int_value(),
+                        capacity.into_int_value(),
+                        "",
+                    ),
+                );
+
+                let whilecond = self.context.append_basic_block(fv, "whilecond");
+                let whilebody = self.context.append_basic_block(fv, "whilebody");
+                let afterwhile = self.context.append_basic_block(fv, "afterwhile");
+
+                self.builder.build_unconditional_branch(whilecond);
+                self.builder.position_at_end(whilecond);
+
+                let state = unsafe {
+                    self.builder.build_gep(
+                        states.into_pointer_value(),
+                        &[self.builder.build_load(idx, "").into_int_value()],
+                        "",
+                    )
+                };
+                let key = unsafe {
+                    self.builder.build_gep(
+                        keys.into_pointer_value(),
+                        &[self.builder.build_load(idx, "").into_int_value()],
+                        "",
+                    )
+                };
+
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        self.builder.build_load(state, "state_idx").into_int_value(),
+                        self.context.i64_type().const_int(STATE_FREE, false),
+                        "is_not_state_free",
+                    ),
+                    whilebody,
+                    afterwhile,
+                );
+                self.builder.position_at_end(whilebody);
+
+                //if
+                let ifbody = self.context.append_basic_block(fv, "ifbody");
+                let afterif = self.context.append_basic_block(fv, "afterif");
+                let keyidx = self.builder.build_load(key, "key_idx");
+                let _cond = self.builder.build_and(
+                    self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        self.builder.build_load(state, "state_idx").into_int_value(),
+                        self.context.i64_type().const_int(STATE_TAKEN, false),
+                        "is_state_taken",
+                    ),
+                    self.builder
+                        .build_call(
+                            self.equal(&k, scopeinfo.clone()),
+                            &[keyidx.into(), fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                            "is_key_equal",
+                        )
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_int_value(),
+                    "ifcond",
+                );
+                self.builder.build_conditional_branch(
+                    self.builder.build_and(
+                        self.builder.build_int_compare(
+                            IntPredicate::EQ,
+                            self.builder.build_load(state, "state_idx").into_int_value(),
+                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            "is_state_taken",
+                        ),
+                        self.builder
+                            .build_call(
+                                self.equal(&k, scopeinfo.clone()),
+                                &[keyidx.into(), fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                                "is_key_equal",
+                            )
+                            .try_as_basic_value()
+                            .unwrap_left()
+                            .into_int_value(),
+                        "ifcond",
+                    ),
+                    ifbody,
+                    afterif,
+                );
+                self.builder.position_at_end(ifbody);
+                self.builder.build_return(Some(&self.builder.build_load(
+                    unsafe {
+                        self.builder.build_gep(
+                            self.builder
+                                .build_load(
+                                    self.builder
+                                        .build_struct_gep(
+                                            fv.get_nth_param(MAP_PARAM)
+                                                .unwrap()
+                                                .into_pointer_value(),
+                                            map_values(&k),
+                                            &("map.values.ptr"),
+                                        )
+                                        .unwrap(),
+                                    "values",
+                                )
+                                .into_pointer_value(),
+                            &[self.builder.build_load(idx, "").into_int_value()],
+                            "",
+                        )
+                    },
+                    "",
+                )));
+                self.builder.position_at_end(afterif);
+
+                self.builder.build_store(
+                    idx,
+                    self.builder.build_int_add(
+                        self.builder.build_load(idx, "").into_int_value(),
+                        self.context.i64_type().const_int(1, false),
+                        "",
+                    ),
+                );
+                self.builder.build_unconditional_branch(whilecond);
+
+                self.builder.position_at_end(afterwhile);
+                self.builder
+                    .build_return(Some(&self.llvmtype(&v, scopeinfo).const_zero()));
+            }
+            self.builder.position_at_end(call_block);
+            fv
+        };
+        fv
+    }
+    fn get_maybe(
+        &mut self,
+        maptype: &Type<'b>,
+        v: &Type<'b>,
+        k: &Type<'b>,
+        llvmmaptype: BasicTypeEnum<'ctx>,
+        llvmkeytype: BasicTypeEnum<'ctx>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+    ) -> FunctionValue<'ctx> {
+        let fname = format!("{}_get_maybe", &maptype);
+        let fv = if let Some(fv) = self.module.get_function(&fname) {
+            fv
+        } else {
+            const MAP_PARAM: u32 = 0;
+            const KEY_PARAM: u32 = 1;
+            let returntype = Type::Map(Box::new(Type::Unit), Box::new(v.clone()));
+            let param_types = if Type::Unit.ne(&k) {
+                vec![llvmmaptype.into(), llvmkeytype.into()]
+            } else {
+                vec![llvmmaptype.into()]
+            };
+            let fv = self.module.add_function(
+                &fname,
+                self.llvmfunctiontype(&returntype, scopeinfo.clone(), &param_types, false),
+                None,
+            );
+            let call_block = self.builder.get_insert_block().unwrap();
+            self.builder
+                .position_at_end(self.context.append_basic_block(fv, "entry"));
+            /*
+            getMaybe(map, k) {
+                i = hash(k) % map.capacity
+                returnval = new <void,V>
+                IF K == UNIT {
+                    if map.size == 1 {
+                        returnval.insert(map.values[0])
+                    }
+                    return returval
+                }
+                while map.state[i] != FREE {
+                    if map.state[i] == TAKEN && map.keys[i] == k {
+                        returnval.insert(map.values[i])
+                        break
+                    }
+                    i = (i + 1) % map.capacity
+                }
+                return returnval
+            }
+            */
+            let returnvalptr = self.builder.build_alloca(
+                self.llvmtype(&returntype, scopeinfo.clone()),
+                "returnvalptr",
+            );
+            self.builder.build_store(
+                returnvalptr,
+                self.builder
+                    .build_call(self.mapcreate(&returntype, scopeinfo.clone()), &[], "")
+                    .try_as_basic_value()
+                    .unwrap_left(),
+            );
+            let returnval = self.builder.build_load(returnvalptr, "returnval");
+
+            if Type::Unit.eq(&k) {
+                let sizeptr = self
+                    .builder
+                    .build_struct_gep(
+                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                        MAP_SIZE,
+                        &("map.size.ptr"),
+                    )
+                    .unwrap();
+                let size = self.builder.build_load(sizeptr, "size");
+
+                let ifbody = self.context.append_basic_block(fv, "ifbody");
+                let afterif = self.context.append_basic_block(fv, "afterif");
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        size.into_int_value(),
+                        self.context.i64_type().const_int(1, false),
+                        "",
+                    ),
+                    ifbody,
+                    afterif,
+                );
+                self.builder.position_at_end(ifbody);
+
+                let insertargs = if Type::Unit.ne(&v) {
+                    let value = self.builder.build_load(
+                        unsafe {
+                            self.builder.build_gep(
+                                self.builder
+                                    .build_load(
+                                        self.builder
+                                            .build_struct_gep(
+                                                fv.get_nth_param(MAP_PARAM)
+                                                    .unwrap()
+                                                    .into_pointer_value(),
+                                                map_values(&k),
+                                                &("map.values.ptr"),
+                                            )
+                                            .unwrap(),
+                                        "values",
+                                    )
+                                    .into_pointer_value(),
+                                &[self.context.i64_type().const_zero()],
+                                "value_0ptr",
+                            )
+                        },
+                        "value_0",
+                    );
+                    vec![returnval.into(), value.into()]
+                } else {
+                    vec![returnval.into()]
+                };
+                self.builder.build_call(
+                    self.mapinsert(&returntype, scopeinfo.clone()),
+                    &insertargs,
+                    "",
+                );
+
+                self.builder.build_unconditional_branch(afterif);
+                self.builder.position_at_end(afterif)
+            } else {
+                let hash = self
+                    .builder
+                    .build_call(
+                        self.hash(&k, scopeinfo.clone()),
+                        &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left();
+
+                let capacity = self.builder.build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            MAP_CAPACITY,
+                            &("map.capacity.ptr"),
+                        )
+                        .unwrap(),
+                    "capacity",
+                );
+
+                let states = self.builder.build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            MAP_STATES,
+                            &("map.states.ptr"),
+                        )
+                        .unwrap(),
+                    "states",
+                );
+
+                let keys = self.builder.build_load(
+                    self.builder
+                        .build_struct_gep(
+                            fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                            MAP_KEYS,
+                            &("map.keys.ptr"),
+                        )
+                        .unwrap(),
+                    "keys",
+                );
+
+                let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                self.builder.build_store(
+                    idx,
+                    self.builder.build_int_unsigned_rem(
+                        hash.into_int_value(),
+                        capacity.into_int_value(),
+                        "",
+                    ),
+                );
+
+                let whilecond = self.context.append_basic_block(fv, "whilecond");
+                let whilebody = self.context.append_basic_block(fv, "whilebody");
+                let afterwhile = self.context.append_basic_block(fv, "afterwhile");
+
+                self.builder.build_unconditional_branch(whilecond);
+                self.builder.position_at_end(whilecond);
+
+                let state = unsafe {
+                    self.builder.build_gep(
+                        states.into_pointer_value(),
+                        &[self.builder.build_load(idx, "").into_int_value()],
+                        "",
+                    )
+                };
+
+                let key = unsafe {
+                    self.builder.build_gep(
+                        keys.into_pointer_value(),
+                        &[self.builder.build_load(idx, "").into_int_value()],
+                        "",
+                    )
+                };
+
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        self.builder.build_load(state, "state_idx").into_int_value(),
+                        self.context.i64_type().const_int(STATE_FREE, false),
+                        "is_not_state_free",
+                    ),
+                    whilebody,
+                    afterwhile,
+                );
+                self.builder.position_at_end(whilebody);
+
+                //if
+                let ifbody = self.context.append_basic_block(fv, "ifbody");
+                let afterif = self.context.append_basic_block(fv, "afterif");
+                let keyidx = self.builder.build_load(key, "key_idx");
+                self.builder.build_conditional_branch(
+                    self.builder.build_and(
+                        self.builder.build_int_compare(
+                            IntPredicate::EQ,
+                            self.builder.build_load(state, "state_idx").into_int_value(),
+                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            "is_state_taken",
+                        ),
+                        self.builder
+                            .build_call(
+                                self.equal(&k, scopeinfo.clone()),
+                                &[keyidx.into(), fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                                "is_key_equal",
+                            )
+                            .try_as_basic_value()
+                            .unwrap_left()
+                            .into_int_value(),
+                        "ifcond",
+                    ),
+                    ifbody,
+                    afterif,
+                );
+                self.builder.position_at_end(ifbody);
+                let insertargs = if Type::Unit.ne(&v) {
+                    let value = self.builder.build_load(
+                        unsafe {
+                            self.builder.build_gep(
+                                self.builder
+                                    .build_load(
+                                        self.builder
+                                            .build_struct_gep(
+                                                fv.get_nth_param(MAP_PARAM)
+                                                    .unwrap()
+                                                    .into_pointer_value(),
+                                                map_values(&k),
+                                                &("map.values.ptr"),
+                                            )
+                                            .unwrap(),
+                                        "values",
+                                    )
+                                    .into_pointer_value(),
+                                &[self.builder.build_load(idx, "").into_int_value()],
+                                "",
+                            )
+                        },
+                        "",
+                    );
+                    vec![returnval.into(), value.into()]
+                } else {
+                    vec![returnval.into()]
+                };
+                self.builder.build_call(
+                    self.mapinsert(&returntype, scopeinfo.clone()),
+                    &insertargs,
+                    "",
+                );
+
+                self.builder.build_unconditional_branch(afterwhile);
+                self.builder.position_at_end(afterif);
+
+                self.builder.build_store(
+                    idx,
+                    self.builder.build_int_add(
+                        self.builder.build_load(idx, "").into_int_value(),
+                        self.context.i64_type().const_int(1, false),
+                        "",
+                    ),
+                );
+                self.builder.build_unconditional_branch(whilecond);
+
+                self.builder.position_at_end(afterwhile);
+            }
+            self.builder.build_return(Some(&returnval));
+            self.builder.position_at_end(call_block);
             fv
         };
         fv

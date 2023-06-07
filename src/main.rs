@@ -1,3 +1,4 @@
+use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 
@@ -12,6 +13,7 @@ mod compile;
 
 
 fn main() {
+	env::set_var("RUST_BACKTRACE", "1");
     let fp = parser::FileParser::new("./main.mpl").unwrap();
     let mut ast = fp.parse().expect("expect no parsing problems");
 	File::create("./out/main.parsed.ast")
