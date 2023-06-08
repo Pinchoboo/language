@@ -4,7 +4,7 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
-    rc::Rc,
+    rc::Rc, process::exit,
 };
 
 use derivative::Derivative;
@@ -42,7 +42,7 @@ pub struct Possition<'a> {
     span: Span<'a>,
 }
 
-#[derive(Derivative, PartialEq, Eq)]
+#[derive(Derivative, PartialEq)]
 #[derivative(Debug)]
 pub struct Program<'a> {
     #[derivative(Debug = "ignore")]
@@ -69,7 +69,7 @@ pub enum Type<'a> {
     Char,
     Unit,
     Map(Box<Type<'a>>, Box<Type<'a>>),
-	ConstMap(Box<Type<'a>>, Box<Type<'a>>),
+    ConstMap(Box<Type<'a>>, Box<Type<'a>>),
     StructMap(Identifier<'a>),
 }
 
@@ -90,7 +90,7 @@ impl<'a> Display for Type<'a> {
                 };
                 Ok(())
             }
-			Type::ConstMap(k, v) => {
+            Type::ConstMap(k, v) => {
                 {
                     f.write_str("const_map_")?;
                     std::fmt::Display::fmt(&k, f)?;
@@ -105,7 +105,7 @@ impl<'a> Display for Type<'a> {
                     std::fmt::Display::fmt(&s, f)?
                 };
                 Ok(())
-            },
+            }
         }
     }
 }
@@ -114,7 +114,7 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
     type Error = ();
     fn try_from(value: Pair<'i, Rule>) -> Result<Self, Self::Error> {
         if value.as_rule() == Rule::r#type || value.as_rule() == Rule::creatableType {
-			let mut value = value.into_inner();
+            let mut value = value.into_inner();
             let inner = value.next().ok_or(())?;
             match inner.as_rule() {
                 Rule::intType => Ok(Type::Int),
@@ -129,17 +129,16 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
                         Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
                     ))
                 }
-				Rule::structmapType => {
-					Ok(Type::StructMap(inner.into_inner().next().unwrap().as_str()))
-				}
-				Rule::r#const => {
-					
-					let mut inner = value.next().unwrap().into_inner();
+                Rule::structmapType => {
+                    Ok(Type::StructMap(inner.into_inner().next().unwrap().as_str()))
+                }
+                Rule::r#const => {
+                    let mut inner = value.next().unwrap().into_inner();
                     Ok(Type::ConstMap(
                         Box::new(Type::try_from(inner.next().expect("key type to exist"))?),
                         Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
                     ))
-				}
+                }
                 _ => Err(()),
             }
         } else {
@@ -148,7 +147,7 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
     }
 }
 
-#[derive(Derivative, PartialEq, Eq)]
+#[derive(Derivative, PartialEq)]
 #[derivative(Debug)]
 pub struct Function<'a> {
     #[derivative(Debug = "ignore")]
@@ -160,7 +159,7 @@ pub struct Function<'a> {
 }
 pub type Identifier<'a> = &'a str;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Block<'a> {
     pub scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
     pub statements: Vec<Statement<'a>>,
@@ -169,7 +168,7 @@ pub struct Block<'a> {
 pub type ConditionalBlock<'a> = (Expression<'a>, Block<'a>);
 pub type Argument<'a> = (Type<'a>, Identifier<'a>);
 
-#[derive(Derivative, PartialEq, Eq)]
+#[derive(Derivative, PartialEq)]
 #[derivative(Debug)]
 pub struct Statement<'a> {
     #[derivative(Debug = "ignore")]
@@ -177,7 +176,7 @@ pub struct Statement<'a> {
     pub statement: StatementType<'a>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum StatementType<'a> {
     If(ConditionalBlock<'a>, Vec<ConditionalBlock<'a>>, Block<'a>),
     While(ConditionalBlock<'a>),
@@ -197,9 +196,10 @@ pub enum StatementType<'a> {
         Vec<Expression<'a>>,
         Option<i32>,
     ),
+    For(Identifier<'a>, Identifier<'a>, Value<'a>, Block<'a>, Option<Type<'a>>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Expression<'a> {
     Binary(
         Box<Expression<'a>>,
@@ -222,9 +222,10 @@ impl<'a> Expression<'a> {
         .unwrap()
     }
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Value<'a> {
-    Number(i32),
+    Int(i64),
+	Float(f64),
     Bool(bool),
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Identifier(Identifier<'a>, Option<i32>),
@@ -237,6 +238,7 @@ pub enum Value<'a> {
     ),
     String(&'a str),
 }
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BinOp {
     Add,
@@ -410,15 +412,15 @@ impl<'a> FileParser {
             statements: pair
                 .into_inner()
                 .map(|sp: Pair<Rule>| {
-                    match sp.as_rule() {
-                        Rule::r#if => {
-                            let mut inner = sp.into_inner();
-                            Statement {
-                                pos: Possition {
-                                    filename: &self.path,
-                                    span,
-                                },
-                                statement: StatementType::If(
+                    Statement {
+                        pos: Possition {
+                            filename: &self.path,
+                            span,
+                        },
+                        statement: match sp.as_rule() {
+                            Rule::r#if => {
+                                let mut inner = sp.into_inner();
+                                StatementType::If(
                                     (
                                         self.parse_expression(
                                             inner.next().expect("if should have a condition"),
@@ -456,36 +458,24 @@ impl<'a> FileParser {
                                         },
                                         |b| self.parse_block(b),
                                     ),
-                                ),
+                                )
                             }
-                        }
-                        Rule::r#while => {
-                            let mut inner = sp.into_inner();
-                            Statement {
-                                pos: Possition {
-                                    filename: &self.path,
-                                    span,
-                                },
-                                statement: StatementType::While((
+                            Rule::r#while => {
+                                let mut inner = sp.into_inner();
+                                StatementType::While((
                                     self.parse_expression(
                                         inner.next().expect("while should have a condition"),
                                     ),
                                     self.parse_block(
                                         inner.next().expect("while should have a code block"),
                                     ),
-                                )),
+                                ))
                             }
-                        }
-                        Rule::assignment => {
-                            let mut inner = sp.into_inner();
-                            let mut current =
-                                inner.next().expect("assignment should have a sub pair");
-                            Statement {
-                                pos: Possition {
-                                    filename: &self.path,
-                                    span,
-                                },
-                                statement: StatementType::Assignment(
+                            Rule::assignment => {
+                                let mut inner = sp.into_inner();
+                                let mut current =
+                                    inner.next().expect("assignment should have a sub pair");
+                                StatementType::Assignment(
                                     {
                                         if let Rule::r#type = current.as_rule() {
                                             let old = current;
@@ -506,17 +496,11 @@ impl<'a> FileParser {
                                         )
                                     },
                                     None,
-                                ),
+                                )
                             }
-                        }
-                        Rule::call => {
-                            let mut inner = sp.into_inner();
-                            Statement {
-                                pos: Possition {
-                                    filename: &self.path,
-                                    span,
-                                },
-                                statement: StatementType::Call(
+                            Rule::call => {
+                                let mut inner = sp.into_inner();
+                                StatementType::Call(
                                     {
                                         let id = inner
                                             .next()
@@ -526,35 +510,21 @@ impl<'a> FileParser {
                                     },
                                     inner.map(|e| self.parse_expression(e)).collect(),
                                     None,
-                                ),
+                                )
                             }
-                        }
-                        Rule::r#return => Statement {
-                            pos: Possition {
-                                filename: &self.path,
-                                span,
-                            },
-                            statement: StatementType::Return(
+                            Rule::r#return => StatementType::Return(
                                 self.parse_expression(
                                     sp.into_inner()
                                         .next()
                                         .expect("assignment should have a variable"),
                                 ),
                             ),
-                        },
-                        Rule::creation => Statement {
-                            pos: Possition {
-                                filename: &self.path,
-                                span,
-                            },
-                            statement: {
+                            Rule::creation => {
                                 let mut inner = sp.into_inner();
                                 StatementType::Creation(
                                     {
-                                        Type::try_from(
-											inner.next().expect("type"),
-										)
-										.expect("valid type")
+                                        Type::try_from(inner.next().expect("type"))
+                                            .expect("valid type")
                                     },
                                     inner
                                         .next()
@@ -562,24 +532,13 @@ impl<'a> FileParser {
                                         .as_str(),
                                     None,
                                 )
-                            },
-                        },
-                        Rule::free => Statement {
-                            pos: Possition {
-                                filename: &self.path,
-                                span,
-                            },
-                            statement: StatementType::Free(
+                            }
+
+                            Rule::free => StatementType::Free(
                                 sp.into_inner().next().expect("identifier").as_str(),
                                 None,
                             ),
-                        },
-                        Rule::mapCall => Statement {
-                            pos: Possition {
-                                filename: &self.path,
-                                span,
-                            },
-                            statement: {
+                            Rule::mapCall => {
                                 let mut inner = sp.into_inner();
                                 StatementType::MapCall(
                                     inner.next().expect("identifier").as_str(),
@@ -590,11 +549,21 @@ impl<'a> FileParser {
                                     inner.map(|e| self.parse_expression(e)).collect(),
                                     None,
                                 )
-                            },
+                            }
+                            Rule::r#for => {
+                                let mut inner = sp.into_inner();
+                                StatementType::For(
+                                    inner.next().expect("identifier").as_str(),
+                                    inner.next().expect("identifier").as_str(),
+									self.parse_value(inner.next().expect("value")),
+                                    self.parse_block(inner.next().expect("block")),
+                                    None,
+                                )
+                            }
+                            _ => {
+                                panic!("unreachable")
+                            }
                         },
-                        _ => {
-                            panic!("unreachable")
-                        }
                     }
                 })
                 .collect(),
@@ -630,7 +599,15 @@ impl<'a> FileParser {
     fn parse_value(&'a self, pair: Pair<'a, Rule>) -> Value {
         match pair.as_rule() {
             //todo handle float
-            Rule::number => Value::Number(pair.as_str().parse::<i32>().expect("int")),
+            Rule::number => {
+				if let Ok(v) = pair.as_str().parse::<i64>(){
+					Value::Int(v)
+				}else if let Ok(v) = pair.as_str().parse::<f64>(){
+					Value::Float(v)
+				}else{
+					panic!("invalid number")
+				}
+			},
             Rule::boolean => Value::Bool(pair.as_str().parse::<bool>().expect("bool")),
             Rule::identifier => Value::Identifier(pair.as_str(), None),
             Rule::call => {
@@ -660,7 +637,7 @@ impl<'a> FileParser {
                     None,
                 )
             }
-			Rule::string => Value::String(pair.into_inner().next().unwrap().as_str()),
+            Rule::string => Value::String(pair.into_inner().next().unwrap().as_str()),
             _ => panic!("unreachable"),
         }
     }

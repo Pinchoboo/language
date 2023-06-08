@@ -15,6 +15,7 @@ flat hash set sse instructions 16 probe
 const <int,char> = "test"
 
 7. hash loop
+7.5 prevent void assignment
 8. optimise
 9. void in mapstruct
 10. custom hash function

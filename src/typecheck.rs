@@ -174,8 +174,8 @@ impl<'a> TypeCheckContext<'a> {
                         find_structmaptype(id, block.scopeinfo.clone())
                             .unwrap_or_else(|| panic!("map type {id} not defined"));
                     }
-
-                    if self.check_expression(expr, block.scopeinfo.clone(), None)
+                    let exprtype = self.check_expression(expr, block.scopeinfo.clone(), None);
+                    if id != &"_" && exprtype
                         != if t.is_none() {
                             //if updating a value
                             //todo maybe give new numeric id
@@ -331,6 +331,32 @@ impl<'a> TypeCheckContext<'a> {
                         panic!("could not find map {id}")
                     }
                 }
+                crate::parser::StatementType::For(k, v, map, innerblock, o) => {
+                    let var = self.check_value(map, block.scopeinfo.clone());
+                    *o = Some(var.clone());
+                    let (ktype, vtype) = if let Type::Map(kt, vt) = &var {
+                        (kt, vt)
+                    } else if let Type::ConstMap(kt, vt) = &var {
+                        (kt, vt)
+                    } else {
+                        panic!("{map:?} is not a map")
+                    };
+                    innerblock.scopeinfo.borrow_mut().variables.push((
+                        k,
+                        *ktype.clone(),
+                        self.next_id,
+                        None,
+                    ));
+                    self.next_id += 1;
+                    innerblock.scopeinfo.borrow_mut().variables.push((
+                        v,
+                        *vtype.clone(),
+                        self.next_id,
+                        None,
+                    ));
+                    self.next_id += 1;
+                    self.check_block(innerblock, returntype, block.scopeinfo.clone());
+                }
             }
         });
         hasreturned
@@ -378,7 +404,8 @@ impl<'a> TypeCheckContext<'a> {
         scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
     ) -> Type<'a> {
         match value {
-            Value::Number(_) => Type::Int,
+            Value::Int(_) => Type::Int,
+            Value::Float(_) => Type::Float,
             Value::Bool(_) => Type::Bool,
             Value::Char(_) => Type::Char,
             Value::Call(id, exprs, o) => {
@@ -406,6 +433,9 @@ impl<'a> TypeCheckContext<'a> {
             }
             Value::Identifier(id, o) => {
                 if let Some(v) = find_variable(id, scopeinfo.clone()) {
+                    if v.1 == Type::Unit {
+                        panic!("can not use void type variable {id} as value")
+                    }
                     *o = Some(v.2);
                     v.1
                 } else {

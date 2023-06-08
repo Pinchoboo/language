@@ -24,10 +24,10 @@ floatType = { "float" }
 boolType  = { "bool" }
 charType  = { "char" }
 unitType  = { "void" | "()" }
-mapType = { "{" ~ type ~ "->" ~ type ~ "}" }
-structmapType  = {"{" ~ identifier ~ "}"}
+mapType = { "[" ~ type ~ "->" ~ type ~ "]" }
+structmapType  = {"[" ~ identifier ~ "]"}
 
-reserved        =  @{ (type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword | freeKeyword) ~ WHITESPACE }
+reserved        =  @{ (type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword | freeKeyword | forKeyWord | inKeyWord) ~ WHITESPACE }
 functionKeyword = _{ "fn" }
 whileKeyword    = _{ "while" }
 ifKeyword       = _{ "if" }
@@ -35,9 +35,11 @@ elseKeyword     = _{ "else" }
 returnKeyword   = _{ "return" }
 createKeyword   = _{ "new" }
 freeKeyword 	= _{ "free" }
+forKeyWord 		= _{ "for" }
+inKeyWord 		= _{ "in" }
 
 identifier = @{
-    !(reserved) ~ (alpha ~ (alpha | digit)*)
+    !(reserved) ~ (("_" |alpha) ~ (alpha | "_" | digit)*)
 }
 
 call = {
@@ -115,16 +117,16 @@ scope    = _{ "{" ~ block ~ "}" }
 if       =  { ifKeyword ~ expression ~ scope ~ (elseKeyword ~ ifKeyword ~ expression ~ scope)* ~ (elseKeyword ~ scope)? }
 while    =  { whileKeyword ~ expression ~ scope }
 function =  { functionKeyword ~ type? ~ identifier ~ "(" ~ (type ~ identifier ~ ("," ~ type ~ identifier)*)? ~ ")" ~ scope }
-
+for = {forKeyWord ~ identifier ~ "->" ~ identifier ~ inKeyWord ~ value ~ scope }
 return = { (returnKeyword ~ expression) }
 free = { (freeKeyword ~ identifier) }
 /// no nested functions and nested scopes for now
 block = {
-    (if | while | assignment | creation | free | mapCall | call)* ~ return?
+    (for | if | while | assignment | creation | free | mapCall | call)* ~ return?
 }
 
 keyTypePair = {identifier ~ "->" ~ type}
-structdef = {"{" ~ identifier ~ "}" ~ "=" ~ "{" ~ keyTypePair* ~ "}"}
+structdef = {"[" ~ identifier ~ "]" ~ "=" ~ "[" ~ keyTypePair* ~ "]"}
 
 program = {
     SOI ~ (function | structdef)* ~ (&EOI ~ ANY*)

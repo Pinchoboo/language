@@ -9,6 +9,7 @@ pub const PRINT_INT: &str = "printInt";
 pub const PRINT_BOOL: &str = "printBool";
 pub const PRINT_LN: &str = "printLn";
 pub const PRINT_CHAR: &str = "printChar";
+pub const PRINT_FLOAT: &str = "printFloat";
 
 pub const SIZE: &str = "size";
 pub const CAPACITY: &str = "capacity";
@@ -26,6 +27,7 @@ pub static PREDEFINED_FUNCTIONS: Lazy<Vec<(&'static str, Vec<Type<'static>>, Typ
             (PRINT_BOOL, vec![Type::Bool], Type::Unit),
             (PRINT_LN, vec![], Type::Unit),
             (PRINT_CHAR, vec![Type::Char], Type::Unit),
+			(PRINT_FLOAT, vec![Type::Float], Type::Unit),
         ]
     });
 
