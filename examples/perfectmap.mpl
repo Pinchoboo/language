@@ -1,9 +1,7 @@
-find perfect [int -> int] perfectintmap {
-	0 -> 3214
-	4235 -> 5423523
-	321532 -> 67345
-	6435 -> 0
-}
+find perfect [int -> int] i = [
+	1 -> 2
+	2 -> 3
+] with(int k) { k }
 
 fn main(){
 	perfectintmap.get(0)

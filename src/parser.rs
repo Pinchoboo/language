@@ -4,7 +4,7 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
-    rc::Rc, process::exit,
+    rc::Rc,
 };
 
 use derivative::Derivative;
@@ -325,7 +325,7 @@ impl<'a> FileParser {
             .map_err(FileParserError::PestParse)?
             .next()
             .unwrap();
-
+		
         let mut functions = vec![];
         let mut structs = vec![];
         for p in pest_program.clone().into_inner() {

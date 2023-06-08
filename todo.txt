@@ -14,11 +14,9 @@ flat hash set sse instructions 16 probe
 
 const <int,char> = "test"
 
-7. hash loop
-7.5 prevent void assignment
+6 perfect hashing
 8. optimise
 9. void in mapstruct
-10. custom hash function
-11. insert clone | manual rehash or clone
+10. insert clone | manual rehash or clone
 
 Type LETTER = A | B | C

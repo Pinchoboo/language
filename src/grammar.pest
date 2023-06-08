@@ -27,7 +27,7 @@ unitType  = { "void" | "()" }
 mapType = { "[" ~ type ~ "->" ~ type ~ "]" }
 structmapType  = {"[" ~ identifier ~ "]"}
 
-reserved        =  @{ (type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword | freeKeyword | forKeyWord | inKeyWord) ~ WHITESPACE }
+reserved        =  @{ (type | boolean | functionKeyword | whileKeyword | ifKeyword | elseKeyword | returnKeyword | createKeyword | freeKeyword | forKeyWord | inKeyWord | findKeyword | withKeyword) ~ WHITESPACE }
 functionKeyword = _{ "fn" }
 whileKeyword    = _{ "while" }
 ifKeyword       = _{ "if" }
@@ -37,6 +37,8 @@ createKeyword   = _{ "new" }
 freeKeyword 	= _{ "free" }
 forKeyWord 		= _{ "for" }
 inKeyWord 		= _{ "in" }
+findKeyword = _{ "find" }
+withKeyword = _{ "with" }
 
 identifier = @{
     !(reserved) ~ (("_" |alpha) ~ (alpha | "_" | digit)*)
@@ -128,6 +130,9 @@ block = {
 keyTypePair = {identifier ~ "->" ~ type}
 structdef = {"[" ~ identifier ~ "]" ~ "=" ~ "[" ~ keyTypePair* ~ "]"}
 
+keyValuePair = {value ~ "->" ~ value}
+find = {findKeyword ~ const ~ mapType ~ identifier ~ "=" ~ "[" ~ keyValuePair* ~ "]" ~ (withKeyword ~ "(" ~ type ~ identifier ~ ")" ~ "{" ~ expression ~ ("," ~ expression)* ~ "}" )? }
+
 program = {
-    SOI ~ (function | structdef)* ~ (&EOI ~ ANY*)
+    SOI ~ (find | function | structdef)* ~ (&EOI ~ ANY*)
 }
