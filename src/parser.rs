@@ -69,7 +69,7 @@ pub enum Type<'a> {
     Char,
     Unit,
     Map(Box<Type<'a>>, Box<Type<'a>>),
-    ConstMap(Box<Type<'a>>, Box<Type<'a>>),
+    PerfectMap(Box<Type<'a>>, Box<Type<'a>>),
     StructMap(Identifier<'a>),
 }
 
@@ -90,7 +90,7 @@ impl<'a> Display for Type<'a> {
                 };
                 Ok(())
             }
-            Type::ConstMap(k, v) => {
+            Type::PerfectMap(k, v) => {
                 {
                     f.write_str("const_map_")?;
                     std::fmt::Display::fmt(&k, f)?;
@@ -134,7 +134,7 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
                 }
                 Rule::r#const => {
                     let mut inner = value.next().unwrap().into_inner();
-                    Ok(Type::ConstMap(
+                    Ok(Type::PerfectMap(
                         Box::new(Type::try_from(inner.next().expect("key type to exist"))?),
                         Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
                     ))

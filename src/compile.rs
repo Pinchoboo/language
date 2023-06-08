@@ -122,7 +122,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     st
                 })
             }
-            Type::ConstMap(k, v) => {
+            Type::PerfectMap(k, v) => {
                 let struct_name = format!("{t}");
                 let size = self.context.i64_type();
                 let keys = self
@@ -173,7 +173,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Char => self.context.i8_type().as_basic_type_enum(),
             Type::Unit => self.context.custom_width_int_type(0).as_basic_type_enum(),
-            Type::Map(_, _) | Type::StructMap(_) | Type::ConstMap(_, _) => self
+            Type::Map(_, _) | Type::StructMap(_) | Type::PerfectMap(_, _) => self
                 .llvmstruct(t, si)
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum(),
@@ -192,7 +192,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             Type::Bool => self.context.bool_type().fn_type(param_types, is_var_args),
             Type::Char => self.context.i8_type().fn_type(param_types, is_var_args),
             Type::Unit => self.context.void_type().fn_type(param_types, is_var_args),
-            Type::Map(_, _) | Type::StructMap(_) | Type::ConstMap(_, _) => self
+            Type::Map(_, _) | Type::StructMap(_) | Type::PerfectMap(_, _) => self
                 .llvmstruct(t, si)
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum()
@@ -743,7 +743,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     );
                     self.builder.build_unconditional_branch(whilecond);
                     self.builder.position_at_end(afterwhile);
-                } else if let Type::ConstMap(k, v) = maptype {
+                } else if let Type::PerfectMap(k, v) = maptype {
                     let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
                     self.builder
                         .build_store(idx, self.context.i64_type().const_zero());
@@ -1168,7 +1168,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             }
             Value::String(str) => {
                 let ty = self.llvmstruct(
-                    &Type::ConstMap(Box::new(Type::Int), Box::new(Type::Char)),
+                    &Type::PerfectMap(Box::new(Type::Int), Box::new(Type::Char)),
                     scopeinfo.clone(),
                 );
                 let str = str.replace("\\n", "\n");
@@ -1757,10 +1757,10 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     panic!("unreachable")
                 }
             }
-        } else if let Some((_, Type::ConstMap(k, v), i, _)) = var {
+        } else if let Some((_, Type::PerfectMap(k, v), i, _)) = var {
             let llvmkeytype = self.llvmtype(&k, scopeinfo.clone());
             let _llvmvaluetype = self.llvmtype(&v, scopeinfo.clone());
-            let maptype = Type::ConstMap(k.clone(), v.clone());
+            let maptype = Type::PerfectMap(k.clone(), v.clone());
             let llvmmaptype = self.llvmtype(&maptype, scopeinfo.clone());
             let mapptr = *self.vars.get(&i).unwrap();
             let map = self.builder.build_load(mapptr, id).into_pointer_value();
@@ -2833,8 +2833,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         return hash
                     }
                      */
+					todo!()
                 }
-                Type::ConstMap(k, v) => {
+                Type::PerfectMap(k, v) => {
                     /*
                     int h = 0
                     int idx = 0
@@ -3760,7 +3761,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     self.builder
                         .build_return(Some(&self.context.bool_type().const_all_ones()));
                 }
-                Type::ConstMap(k, v) => {
+                Type::PerfectMap(k, v) => {
                     /*
                         constmapequal(a,b){
                             if a.size() != b.size() {
@@ -3780,7 +3781,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             return true
                         }
                     */
-                    let maptype = Type::ConstMap(k.clone(), v.clone());
+                    let maptype = Type::PerfectMap(k.clone(), v.clone());
                     let llvmmaptype = self.llvmtype(&maptype, scopeinfo.clone());
                     let llvmkeytype = self.llvmtype(k, scopeinfo.clone());
 

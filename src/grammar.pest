@@ -18,7 +18,7 @@ false   = { "false" }
 
 type      = { intType | floatType | boolType | charType | unitType | const? ~ mapType | structmapType }
 
-const = {"const"}
+const = {"perfect"}
 intType   = { "int" }
 floatType = { "float" }
 boolType  = { "bool" }

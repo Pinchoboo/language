@@ -251,7 +251,7 @@ impl<'a> TypeCheckContext<'a> {
                         ) {
                             panic!("{e}");
                         }
-                    } else if let Some((_, Type::ConstMap(k, v), n, _)) = fv {
+                    } else if let Some((_, Type::PerfectMap(k, v), n, _)) = fv {
                         *o = Some(n);
                         if let Err(e) = functions::valid_map_function(
                             *k,
@@ -336,7 +336,7 @@ impl<'a> TypeCheckContext<'a> {
                     *o = Some(var.clone());
                     let (ktype, vtype) = if let Type::Map(kt, vt) = &var {
                         (kt, vt)
-                    } else if let Type::ConstMap(kt, vt) = &var {
+                    } else if let Type::PerfectMap(kt, vt) = &var {
                         (kt, vt)
                     } else {
                         panic!("{map:?} is not a map")
@@ -459,7 +459,7 @@ impl<'a> TypeCheckContext<'a> {
                         Ok(t) => t,
                         Err(e) => panic!("{e}"),
                     }
-                } else if let Some((_, Type::ConstMap(k, v), n, _)) = fv {
+                } else if let Some((_, Type::PerfectMap(k, v), n, _)) = fv {
                     *o = Some(n);
                     match functions::valid_map_function(
                         *k,
@@ -501,7 +501,7 @@ impl<'a> TypeCheckContext<'a> {
                     panic!("could not find map {id}")
                 }
             }
-            Value::String(_) => Type::ConstMap(Box::new(Type::Int), Box::new(Type::Char)),
+            Value::String(_) => Type::PerfectMap(Box::new(Type::Int), Box::new(Type::Char)),
         }
     }
 }
