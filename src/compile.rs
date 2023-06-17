@@ -8,7 +8,8 @@ use std::{
 
 use inkwell::{
     builder::Builder,
-    context::Context,
+    context::{Context, self},
+    execution_engine::{JitFunction, UnsafeFunctionPointer},
     module::{Linkage, Module},
     targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple},
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
@@ -30,30 +31,27 @@ const MEMSET: &str = "memset";
 const CALLOC: &str = "calloc";
 
 pub struct Compiler<'ctx, 'a, 'b> {
-    pub context: &'ctx Context,
-    pub builder: &'a Builder<'ctx>,
-    pub module: &'a Module<'ctx>,
-    pub vars: HashMap<i32, PointerValue<'ctx>>,
+    context: &'ctx Context,
+    builder: &'a Builder<'ctx>,
+    module: &'a Module<'ctx>,
+    vars: HashMap<i32, PointerValue<'ctx>>,
     strings: Rc<RefCell<HashMap<String, PointerValue<'ctx>>>>,
     mapstructs: HashMap<Type<'b>, StructType<'ctx>>,
     structbodies: Vec<(StructType<'ctx>, Vec<BasicTypeEnum<'ctx>>)>,
 }
 
-pub fn compile(program: Program) {
-    let context = Context::create();
-    let module = context.create_module("module");
-    let builder = context.create_builder();
-
+pub fn compile<'ctx, 'a, 'b>(context: &'ctx Context, builder: &'a Builder<'ctx>, module: &'a Module<'ctx>, program: Program<'b>) -> Compiler<'ctx, 'a, 'b>{
     let mut c = Compiler {
-        context: &context,
-        module: &module,
-        builder: &builder,
+        context,
+        module,
+        builder,
         vars: HashMap::new(),
         strings: Rc::new(RefCell::new(HashMap::new())),
         mapstructs: HashMap::new(),
         structbodies: Vec::new(),
     };
     c.compile(program);
+	c
 }
 
 pub const CONST_MAP_SIZE: u32 = 0;
@@ -264,7 +262,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         }
     }
 
-    pub fn compile(&mut self, program: Program<'b>) {
+    fn compile(&mut self, program: Program<'b>) {
         //add external functions
         {
             self.module.add_function(
@@ -385,16 +383,16 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             //save llvm ir
             self.module
                 .set_triple(&TargetTriple::create("x86_64-pc-linux-gnu"));
-            let _result = self.module.print_to_file("./out/main.ll");
+            let _result = self.module.print_to_file("./out/program.ll");
 
             //check module
             let err = Command::new("opt-12")
                 .arg("-verify")
-                .arg("./out/main.ll")
+                .arg("./out/program.ll")
                 .arg("-O3")
                 .arg("-S")
                 .arg("-o")
-                .arg("./out/main.opt.ll")
+                .arg("./out/program.opt.ll")
                 .output()
                 .unwrap()
                 .stderr;
@@ -437,9 +435,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             );*/
             let err = Command::new("clang")
                 .arg("-no-pie")
-                .arg("./out/main.ll")
+                .arg("./out/program.ll")
                 .arg("-o")
-                .arg("./out/main")
+                .arg("./out/program")
                 .arg("-g")
                 .arg("-O3")
                 .output()
@@ -453,10 +451,13 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 println!("LLVM-IR compiled succesfully")
             }
         }
+    }
 
-        //exec
-        println!("./out/main");
-        self.execute()
+    pub fn execute(&self) -> i32 {
+        unsafe {
+            self.get_function::<unsafe extern "C" fn() -> i32>("main")
+                .call()
+        }
     }
 
     fn emit_printf_call(
@@ -492,21 +493,18 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         pointer_value
     }
 
-    fn execute(&self) {
+    pub fn get_function<F: UnsafeFunctionPointer>(&self, fname: &str) -> JitFunction<'_, F> {
         let ee = self
             .module
             .create_jit_execution_engine(OptimizationLevel::Aggressive)
             .unwrap();
-        let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> f64>("main") };
+        let maybe_fn = unsafe { ee.get_function::<F>(fname) };
 
-        let compiled_fn = match maybe_fn {
+        match maybe_fn {
             Ok(f) => f,
             Err(err) => {
                 panic!("{:?}", err);
             }
-        };
-        unsafe {
-            compiled_fn.call();
         }
     }
 

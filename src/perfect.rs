@@ -1,8 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
-    io::BufReader,
-    time::Instant,
+    io::BufReader
 };
 
 use crate::{parser::PerfectMap, typecheck::ConstValue};
