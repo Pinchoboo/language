@@ -14,7 +14,7 @@ flat hash set sse instructions 16 probe
 
 const <int,char> = "test"
 
-8. custom key
+8. custom key + force if collide
 9. void in mapstruct
 10. insert clone | manual rehash or clone
 

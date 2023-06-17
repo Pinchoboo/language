@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     io::BufReader,
+    time::Instant,
 };
 
 use crate::{parser::PerfectMap, typecheck::ConstValue};
@@ -14,17 +15,16 @@ pub fn find_hash_function(p: &mut PerfectMap) {
         let mut args = vec![0];
         while !is_perfect(vals, &args) {
             for i in 0..(args.len()) {
-                if args[i] == 63 {
-                    if i == 2 {
-                        print!(".");
-                    }
-                    args[i] = 0;
+                if args[i] == (63 - i as u32) {
+                    args[i] = ((i)..63).find(|v| !args.contains(&(*v as u32))).unwrap() as u32;
                     if i == args.len() - 1 {
-                        args.push(0);
+                        args.push(args.len() as u32);
                         break;
                     }
                 } else {
-                    args[i] += 1;
+                    args[i] = (args[i]..64)
+                        .find(|v| !args.contains(v))
+                        .unwrap_or(63 - i as u32);
                     break;
                 }
             }

@@ -8,6 +8,13 @@ find perfect [perfect [int -> char] -> int] test = [
 	"perfect" -> 6
 	"hash" -> 7
 	"function" -> 8
+	"in" -> 9
+	"my" -> 10
+	"new" -> 11
+	"map" -> 12
+	"based" -> 13
+	"programming" -> 14
+	"language" -> 15
 ]
 
 fn main(){
