@@ -6,21 +6,24 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
-mod parser;
-mod functions;
-mod typecheck;
 mod compile;
-
+mod functions;
+mod parser;
+mod perfect;
+mod typecheck;
 
 fn main() {
-	env::set_var("RUST_BACKTRACE", "1");
+    env::set_var("RUST_BACKTRACE", "1");
     let fp = parser::FileParser::new("./main.mpl").unwrap();
     let mut ast = fp.parse().expect("expect no parsing problems");
-	File::create("./out/main.parsed.ast")
+    File::create("./out/main.parsed.ast")
         .expect("no problems opening/creating file")
         .write_all(format!("{:#?}", ast).as_bytes())
         .expect("no problems writing to the file");
-	typecheck::typecheck(&mut ast);
+    typecheck::typecheck(&mut ast);
+    for m in &mut ast.findmaps {
+        perfect::find_hash_function(m)
+    }
     File::create("./out/main.checked.ast")
         .expect("no problems opening/creating file")
         .write_all(format!("{:#?}", ast).as_bytes())

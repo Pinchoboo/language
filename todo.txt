@@ -20,3 +20,5 @@ const <int,char> = "test"
 10. insert clone | manual rehash or clone
 
 Type LETTER = A | B | C
+---
+palindrome number

@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    rc::Rc,
+    rc::Rc, fmt::Display,
 };
 
 use derivative::Derivative;
@@ -43,9 +43,30 @@ static BINARY_TABLE: Lazy<HashMap<(Type, BinOp, Type), Type>> = Lazy::new(|| {
     m.insert((Type::Int, BinOp::Smaller, Type::Int), Type::Bool);
     m.insert((Type::Int, BinOp::SmallerEqual, Type::Int), Type::Bool);
 
+	m.insert((Type::Float, BinOp::Add, Type::Float), Type::Float);
+    m.insert((Type::Float, BinOp::And, Type::Float), Type::Float);
+    m.insert((Type::Float, BinOp::Divide, Type::Float), Type::Float);
+    m.insert((Type::Float, BinOp::Multiply, Type::Float), Type::Float);
+    m.insert((Type::Float, BinOp::Or, Type::Float), Type::Float);
+    m.insert((Type::Float, BinOp::Subtract, Type::Float), Type::Float);
+    m.insert((Type::Float, BinOp::Xor, Type::Float), Type::Float);
+
+    m.insert((Type::Float, BinOp::Equal, Type::Float), Type::Bool);
+    m.insert((Type::Float, BinOp::NotEqual, Type::Float), Type::Bool);
+    m.insert((Type::Float, BinOp::Greater, Type::Float), Type::Bool);
+    m.insert((Type::Float, BinOp::GreaterEqual, Type::Float), Type::Bool);
+    m.insert((Type::Float, BinOp::Smaller, Type::Float), Type::Bool);
+    m.insert((Type::Float, BinOp::SmallerEqual, Type::Float), Type::Bool);
+
     //todo chars and floats
     m
 });
+
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+pub enum ConstValue {
+    Bits(u64),
+    Map(Vec<(ConstValue, ConstValue)>),
+}
 
 pub struct TypeCheckContext<'a> {
     next_id: i32,
@@ -72,6 +93,7 @@ pub fn typecheck(ast: &mut Program) {
     if !ast.functions.iter().any(|f| f.identifier.eq("main")) {
         panic!("could not find a top level main function")
     }
+
     //check for duplicate functions
     let mut functions = HashSet::new();
     ast.functions.iter().for_each(|f| {
@@ -105,6 +127,13 @@ pub fn typecheck(ast: &mut Program) {
             tcc.next_id,
         ));
         tcc.next_id += 1;
+    }
+    //check perfect hash maps
+    for fm in &mut ast.findmaps {
+        fm.values = tcc.check_perfect_map(fm);
+		tcc.root.borrow_mut().variables.push((fm.identifier, fm.maptype.clone(), tcc.next_id, None));
+		fm.nid = tcc.next_id;
+		tcc.next_id +=1;
     }
 
     //check blocks
@@ -175,37 +204,38 @@ impl<'a> TypeCheckContext<'a> {
                             .unwrap_or_else(|| panic!("map type {id} not defined"));
                     }
                     let exprtype = self.check_expression(expr, block.scopeinfo.clone(), None);
-                    if id != &"_" && exprtype
-                        != if t.is_none() {
-                            //if updating a value
-                            //todo maybe give new numeric id
-                            if let Some(v) = find_variable(id, block.scopeinfo.clone()) {
-                                *o = Some(v.2);
-                                v.1
+                    if id != &"_"
+                        && exprtype
+                            != if t.is_none() {
+                                //if updating a value
+                                //todo maybe give new numeric id
+                                if let Some(v) = find_variable(id, block.scopeinfo.clone()) {
+                                    *o = Some(v.2);
+                                    v.1
+                                } else {
+                                    panic!(" could not find variable '{id}'")
+                                }
                             } else {
-                                panic!(" could not find variable '{id}'")
+                                if block
+                                    .scopeinfo
+                                    .borrow()
+                                    .variables
+                                    .iter()
+                                    .any(|(vid, _, _, _)| vid.eq(id))
+                                {
+                                    panic!("already a variable '{id}' in this scope")
+                                }
+                                //if new initialized variable
+                                block.scopeinfo.borrow_mut().variables.push((
+                                    id,
+                                    t.as_ref().unwrap().clone(),
+                                    self.next_id,
+                                    None,
+                                ));
+                                *o = Some(self.next_id);
+                                self.next_id += 1;
+                                t.as_ref().unwrap().clone()
                             }
-                        } else {
-                            if block
-                                .scopeinfo
-                                .borrow()
-                                .variables
-                                .iter()
-                                .any(|(vid, _, _, _)| vid.eq(id))
-                            {
-                                panic!("already a variable '{id}' in this scope")
-                            }
-                            //if new initialized variable
-                            block.scopeinfo.borrow_mut().variables.push((
-                                id,
-                                t.as_ref().unwrap().clone(),
-                                self.next_id,
-                                None,
-                            ));
-                            *o = Some(self.next_id);
-                            self.next_id += 1;
-                            t.as_ref().unwrap().clone()
-                        }
                     {
                         panic!("type of expression {expr:?} does not match type of variable {id}")
                     }
@@ -502,6 +532,48 @@ impl<'a> TypeCheckContext<'a> {
                 }
             }
             Value::String(_) => Type::PerfectMap(Box::new(Type::Int), Box::new(Type::Char)),
+        }
+    }
+
+    fn check_perfect_map(&mut self, fm: &mut crate::parser::PerfectMap<'a>) -> Vec<(ConstValue, ConstValue)> {
+        assert!(
+            matches!(fm.maptype, Type::PerfectMap(..)),
+            "{fm:?} should be of type map"
+        );
+
+        if let Type::PerfectMap(k, v) = &fm.maptype {
+            let id = fm.identifier;
+            let mut set:HashSet<ConstValue> = HashSet::new();
+			let mut assoc = Vec::new();
+            for e in &mut fm.entries {
+                let key = self.get_const_value(&mut e.0, k);
+				if !set.insert(key.clone()){
+					panic!("duplicate key {:?}", e.0);
+				}
+				assoc.push((
+                    key,
+                    self.get_const_value(&mut e.1, v),
+                ));
+            }
+			assoc
+        } else {
+            panic!("{} should be of type map", fm.identifier);
+        }
+    }
+
+    fn get_const_value(&mut self, v: &mut Value<'a>, t: &Type<'a>) -> ConstValue {
+        assert_eq!((t), (&self.check_value(v, self.root.clone())));
+        match t {
+            Type::Unit => todo!(),
+            Type::Map(_, _) => todo!(),
+            Type::PerfectMap(_, _) => todo!(),
+            Type::StructMap(_) => todo!(),
+            _ => ConstValue::Bits(match v {
+				Value::Int(i) => *i as u64,
+				Value::Float(i) => i.to_bits(),
+				Value::Bool(b) => *b as u64,
+				_ => panic!("invalid")
+			}),
         }
     }
 }

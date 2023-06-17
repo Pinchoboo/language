@@ -13,15 +13,16 @@ use inkwell::{
     targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple},
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{
-        BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue, FunctionValue,
-        PointerValue,
+        ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
+        FunctionValue, PointerValue,
     },
     AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel,
 };
 
 use crate::{
     functions::{self},
-    parser::{BinOp, Block, Expression, Program, Statement, Type, Value},
+    parser::{BinOp, Block, Expression, PerfectMap, Program, Statement, Type, Value},
+    perfect,
     typecheck::{self, find_structmaptype, find_variable, ScopeInfo},
 };
 const PRINTF: &str = "printf";
@@ -58,6 +59,8 @@ pub fn compile(program: Program) {
 pub const CONST_MAP_SIZE: u32 = 0;
 pub const CONST_MAP_KEYS: u32 = 1;
 pub const CONST_MAP_VALUES: u32 = 2;
+pub const CONST_MAP_ARGS_LEN: u32 = 3;
+pub const CONST_MAP_ARGS: u32 = 4;
 
 pub const STRUCT_MAP_SIZE: u32 = 0;
 pub const STRUCT_MAP_FLAGS: u32 = 1;
@@ -79,6 +82,8 @@ fn map_values(k: &Type) -> u32 {
 pub const STATE_FREE: u64 = 0;
 pub const STATE_TAKEN: u64 = 1;
 pub const STATE_TOMB: u64 = 2;
+
+const ROT: &str = "llvm.fshr.i64";
 
 impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
     fn llvmstruct(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> StructType<'ctx> {
@@ -129,10 +134,21 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .llvmtype(k, si.clone())
                     .ptr_type(AddressSpace::default());
                 let vals = self.llvmtype(v, si).ptr_type(AddressSpace::default());
+                let argslen = self.context.i32_type();
+                let args = self.context.i32_type().ptr_type(AddressSpace::default());
 
                 *self.mapstructs.entry(t.clone()).or_insert({
                     let st = self.context.opaque_struct_type(&struct_name);
-                    st.set_body(&[size.into(), keys.into(), vals.into()], false);
+                    st.set_body(
+                        &[
+                            size.into(),
+                            keys.into(),
+                            vals.into(),
+                            argslen.into(),
+                            args.into(),
+                        ],
+                        false,
+                    );
                     st
                 })
             }
@@ -177,6 +193,54 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .llvmstruct(t, si)
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum(),
+        }
+    }
+    fn llvmconstarray(
+        &mut self,
+        t: &Type<'b>,
+        si: Rc<RefCell<ScopeInfo<'b>>>,
+        values: &[BasicValueEnum<'ctx>],
+    ) -> ArrayValue<'ctx> {
+        match t {
+            Type::Int => self.context.i64_type().const_array(
+                &values
+                    .iter()
+                    .map(|v| v.into_int_value())
+                    .collect::<Vec<_>>(),
+            ),
+            Type::Float => self.context.f64_type().const_array(
+                &values
+                    .iter()
+                    .map(|v| v.into_float_value())
+                    .collect::<Vec<_>>(),
+            ),
+            Type::Bool => self.context.bool_type().const_array(
+                &values
+                    .iter()
+                    .map(|v| v.into_int_value())
+                    .collect::<Vec<_>>(),
+            ),
+            Type::Char => self.context.i8_type().const_array(
+                &values
+                    .iter()
+                    .map(|v| v.into_int_value())
+                    .collect::<Vec<_>>(),
+            ),
+            Type::Unit => self.context.custom_width_int_type(0).const_array(
+                &values
+                    .iter()
+                    .map(|v| v.into_int_value())
+                    .collect::<Vec<_>>(),
+            ),
+            Type::Map(_, _) | Type::StructMap(_) | Type::PerfectMap(_, _) => self
+                .llvmstruct(t, si)
+                .ptr_type(AddressSpace::default())
+                .const_array(
+                    &values
+                        .iter()
+                        .map(|v| v.into_pointer_value())
+                        .collect::<Vec<_>>(),
+                ),
         }
     }
     fn llvmfunctiontype(
@@ -244,6 +308,23 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     ),
                 Some(Linkage::External),
             );
+            self.module.add_function(
+                ROT,
+                self.context.i64_type().fn_type(
+                    &[
+                        self.context.i64_type().into(),
+                        self.context.i64_type().into(),
+                        self.context.i64_type().into(),
+                    ],
+                    false,
+                ),
+                Some(Linkage::External),
+            );
+        }
+
+        for fm in program.findmaps {
+            let ptr = self.emit_global_map(program.scopeinfo.clone(), &fm);
+            self.vars.insert(fm.nid, ptr);
         }
         // compile program
         program
@@ -588,7 +669,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 self.builder.build_unconditional_branch(condlable);
                 self.builder.position_at_end(condlable);
                 self.builder.build_conditional_branch(
-                    self.emit_expression(cond, scopeinfo, fv, false).into_int_value(),
+                    self.emit_expression(cond, scopeinfo, fv, false)
+                        .into_int_value(),
                     whilelable,
                     afterwhilelable,
                 );
@@ -1058,6 +1140,19 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         self.builder
                             .build_int_mul(lv.into_int_value(), rv.into_int_value(), ""),
                     ),
+					
+					(Type::Float, BinOp::Add, Type::Float) => BasicValueEnum::FloatValue(
+                        self.builder
+                            .build_float_add(lv.into_float_value(), rv.into_float_value(), ""),
+                    ),
+                    (Type::Float, BinOp::Subtract, Type::Float) => BasicValueEnum::FloatValue(
+                        self.builder
+                            .build_float_sub(lv.into_float_value(), rv.into_float_value(), ""),
+                    ),
+                    (Type::Float, BinOp::Multiply, Type::Float) => BasicValueEnum::FloatValue(
+                        self.builder
+                            .build_float_mul(lv.into_float_value(), rv.into_float_value(), ""),
+                    ),
 
                     (Type::Int, BinOp::Smaller, Type::Int) => {
                         BasicValueEnum::IntValue(self.builder.build_int_compare(
@@ -1109,15 +1204,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             Expression::Value(v, Some(_)) => {
                 if discardvalue {
                     match v {
-						Value::Call(id, args, Some(i)) => {self
-								.emit_call(id, args, i, scopeinfo, fv);
-						},
+                        Value::Call(id, args, Some(i)) => {
+                            self.emit_call(id, args, i, scopeinfo, fv);
+                        }
                         Value::MapCall(id, id2, exprs, Some(i)) => {
-							self.emit_map_call(id, id2, exprs, i, scopeinfo, fv);
-						},
-                        _ => {},
+                            self.emit_map_call(id, id2, exprs, i, scopeinfo, fv);
+                        }
+                        _ => {}
                     }
-					self.context.custom_width_int_type(0).const_zero().into()
+                    self.context.custom_width_int_type(0).const_zero().into()
                 } else {
                     self.emit_value(v, scopeinfo, fv)
                 }
@@ -1127,7 +1222,32 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             }
         }
     }
-
+    fn emit_const(
+        &mut self,
+        val: &Value,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+    ) -> BasicValueEnum<'ctx> {
+        match val {
+            Value::Int(n) => BasicValueEnum::IntValue(
+                self.context
+                    .i64_type()
+                    .const_int((*n).try_into().unwrap(), false),
+            ),
+            Value::Float(n) => BasicValueEnum::FloatValue(self.context.f64_type().const_float(*n)),
+            Value::Char(c) => BasicValueEnum::IntValue(
+                self.context
+                    .i64_type()
+                    .const_int((*c as u32).try_into().unwrap(), false),
+            ),
+            Value::Bool(b) => BasicValueEnum::IntValue(
+                self.context
+                    .bool_type()
+                    .const_int(if *b { 1 } else { 0 }, false),
+            ),
+            Value::String(str) => self.emit_str(scopeinfo, str).as_basic_value_enum(),
+            _ => panic!("unreachable"),
+        }
+    }
     fn emit_value(
         &mut self,
         val: &Value,
@@ -1166,67 +1286,83 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             Value::MapCall(id, id2, exprs, Some(i)) => {
                 self.emit_map_call(id, id2, exprs, i, scopeinfo, fv)
             }
-            Value::String(str) => {
-                let ty = self.llvmstruct(
-                    &Type::PerfectMap(Box::new(Type::Int), Box::new(Type::Char)),
-                    scopeinfo.clone(),
-                );
-                let str = str.replace("\\n", "\n");
-                let len = str.len();
-
-                let keysptr = {
-                    let gv = self.module.add_global(
-                        self.context.i64_type().array_type(len as u32),
-                        Some(AddressSpace::default()),
-                        "g.keys",
-                    );
-                    gv.set_linkage(Linkage::Internal);
-                    let vals = self.context.i64_type().const_array(
-                        &(0..len)
-                            .map(|i| self.context.i64_type().const_int(i as u64, false))
-                            .collect::<Vec<_>>(),
-                    );
-                    gv.set_initializer(&vals.as_basic_value_enum());
-                    self.builder.build_bitcast(
-                        gv.as_pointer_value(),
-                        self.context.i64_type().ptr_type(AddressSpace::default()),
-                        "",
-                    )
-                };
-                let strptr = {
-                    let gv = self.module.add_global(
-                        self.context.i8_type().array_type(len as u32),
-                        Some(AddressSpace::default()),
-                        "g.str",
-                    );
-                    gv.set_linkage(Linkage::Internal);
-                    let vals = self.context.const_string(str.as_ref(), false);
-                    gv.set_initializer(&vals.as_basic_value_enum());
-                    self.builder.build_bitcast(
-                        gv.as_pointer_value(),
-                        self.context.i8_type().ptr_type(AddressSpace::default()),
-                        "",
-                    )
-                };
-
-                let gv = self
-                    .module
-                    .add_global(ty, Some(AddressSpace::default()), "g");
-                gv.set_linkage(Linkage::Internal);
-
-                let size = self.context.i64_type().const_int(len as u64, false);
-
-                gv.set_initializer(
-                    &self
-                        .context
-                        .const_struct(&[size.into(), keysptr, strptr], false),
-                );
-
-                let ptr = gv.as_pointer_value();
-                ptr.as_basic_value_enum()
-            }
+            Value::String(str) => self.emit_str(scopeinfo, str).as_basic_value_enum(),
             _ => panic!("unreachable"),
         }
+    }
+    fn emit_str(&mut self, scopeinfo: Rc<RefCell<ScopeInfo<'b>>>, str: &str) -> PointerValue<'ctx> {
+        let ty = self.llvmstruct(
+            &Type::PerfectMap(Box::new(Type::Int), Box::new(Type::Char)),
+            scopeinfo.clone(),
+        );
+        let str = str.replace("\\n", "\n");
+        let len = str.len();
+
+        let keysptr = {
+            let gv = self.module.add_global(
+                self.context.i64_type().array_type(len as u32),
+                Some(AddressSpace::default()),
+                "g.keys",
+            );
+            gv.set_linkage(Linkage::Internal);
+            let vals = self.context.i64_type().const_array(
+                &(0..len)
+                    .map(|i| self.context.i64_type().const_int(i as u64, false))
+                    .collect::<Vec<_>>(),
+            );
+            gv.set_initializer(&vals.as_basic_value_enum());
+            self.builder.build_bitcast(
+                gv.as_pointer_value(),
+                self.context.i64_type().ptr_type(AddressSpace::default()),
+                "",
+            )
+        };
+        let strptr = {
+            let gv = self.module.add_global(
+                self.context.i8_type().array_type(len as u32),
+                Some(AddressSpace::default()),
+                "g.values",
+            );
+            gv.set_linkage(Linkage::Internal);
+            let vals = self.context.const_string(str.as_ref(), false);
+            gv.set_initializer(&vals.as_basic_value_enum());
+            self.builder.build_bitcast(
+                gv.as_pointer_value(),
+                self.context.i8_type().ptr_type(AddressSpace::default()),
+                "",
+            )
+        };
+
+        let gv = self
+            .module
+            .add_global(ty, Some(AddressSpace::default()), "g");
+        gv.set_linkage(Linkage::Internal);
+
+        let size = self.context.i64_type().const_int(len as u64, false);
+
+        let argslen = self.context.i32_type().const_int(1, false).into();
+        let args = {
+            let gv = self.module.add_global(
+                self.context.i32_type().array_type(1),
+                Some(AddressSpace::default()),
+                "g.args",
+            );
+            gv.set_linkage(Linkage::Internal);
+            let vals = vec![self.context.i32_type().const_zero().into()];
+            let vals = self.llvmconstarray(&Type::Int, scopeinfo.clone(), &vals);
+            gv.set_initializer(&vals.as_basic_value_enum());
+            self.builder.build_bitcast(
+                gv.as_pointer_value(),
+                self.context.i32_type().ptr_type(AddressSpace::default()),
+                "",
+            )
+        };
+        gv.set_initializer(
+            &self
+                .context
+                .const_struct(&[size.into(), keysptr, strptr, argslen, args], false),
+        );
+        gv.as_pointer_value()
     }
 
     fn emit_call(
@@ -1240,7 +1376,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         let args: Vec<_> = args
             .iter()
             .map(|expr| {
-                BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone(), fv, false))
+                BasicMetadataValueEnum::from(self.emit_expression(
+                    expr,
+                    scopeinfo.clone(),
+                    fv,
+                    false,
+                ))
             })
             .collect();
         if *i == -1 {
@@ -1281,7 +1422,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             let args: Vec<BasicMetadataValueEnum<'ctx>> = args
                 .iter()
                 .map(|expr| {
-                    BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone(), fv, false))
+                    BasicMetadataValueEnum::from(self.emit_expression(
+                        expr,
+                        scopeinfo.clone(),
+                        fv,
+                        false,
+                    ))
                 })
                 .collect();
             allargs.extend_from_slice(&args);
@@ -1768,7 +1914,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             let args: Vec<BasicMetadataValueEnum<'ctx>> = args
                 .iter()
                 .map(|expr| {
-                    BasicMetadataValueEnum::from(self.emit_expression(expr, scopeinfo.clone(), fv, false))
+                    BasicMetadataValueEnum::from(self.emit_expression(
+                        expr,
+                        scopeinfo.clone(),
+                        fv,
+                        false,
+                    ))
                 })
                 .collect();
             allargs.extend_from_slice(&args);
@@ -1808,7 +1959,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             IF K == UNIT {
                                 return map.values[0]
                             }
-                            return = map.values[hash(k) % map.size]
+                            return = map.values[hash_perfect(k) % map.size]
                         }
                         */
 
@@ -1839,11 +1990,38 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                                 "",
                             )));
                         } else {
+                            let map = fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value();
                             let hash = self
                                 .builder
                                 .build_call(
-                                    self.hash(&k, scopeinfo.clone()),
-                                    &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                                    self.hash_perfect(&k, scopeinfo.clone()),
+                                    &[
+                                        self.builder
+                                            .build_load(
+                                                self.builder
+                                                    .build_struct_gep(
+                                                        map,
+                                                        CONST_MAP_ARGS_LEN,
+                                                        &(id.to_string() + ".argslen.ptr"),
+                                                    )
+                                                    .unwrap(),
+                                                "argslen",
+                                            )
+                                            .into(),
+                                        self.builder
+                                            .build_load(
+                                                self.builder
+                                                    .build_struct_gep(
+                                                        map,
+                                                        CONST_MAP_ARGS,
+                                                        &(id.to_string() + ".args.ptr"),
+                                                    )
+                                                    .unwrap(),
+                                                "args",
+                                            )
+                                            .into(),
+                                        fv.get_nth_param(KEY_PARAM).unwrap().into(),
+                                    ],
                                     "",
                                 )
                                 .try_as_basic_value()
@@ -1851,7 +2029,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             let size = self.builder.build_load(
                                 self.builder
                                     .build_struct_gep(
-                                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                                        map,
                                         CONST_MAP_SIZE,
                                         &(id.to_string() + ".size.ptr"),
                                     )
@@ -1896,24 +2074,22 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         .try_as_basic_value()
                         .unwrap_left()
                 }
-                functions::GET_MAYBE => {
-                    println!("{:?}", allargs);
-                    self.builder
-                        .build_call(
-                            self.const_map_get_maybe(
-                                &maptype,
-                                &v,
-                                &k,
-                                llvmmaptype,
-                                llvmkeytype,
-                                scopeinfo,
-                            ),
-                            &allargs,
-                            "",
-                        )
-                        .try_as_basic_value()
-                        .unwrap_left()
-                }
+                functions::GET_MAYBE => self
+                    .builder
+                    .build_call(
+                        self.const_map_get_maybe(
+                            &maptype,
+                            &v,
+                            &k,
+                            llvmmaptype,
+                            llvmkeytype,
+                            scopeinfo,
+                        ),
+                        &allargs,
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left(),
                 _ => {
                     panic!()
                 }
@@ -1937,7 +2113,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     expr,
                     scopeinfo.clone(),
                     fv,
-					false
+                    false,
                 )));
             }));
 
@@ -2833,7 +3009,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         return hash
                     }
                      */
-					todo!()
+                    todo!()
                 }
                 Type::PerfectMap(k, v) => {
                     /*
@@ -3851,7 +4027,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     let afterifa = self.context.append_basic_block(fv, "afterifa");
                     let afterifb = self.context.append_basic_block(fv, "afterifb");
 
-                    println!("{:?}", b);
                     let getmaybeargs = if Type::Unit.eq(k) {
                         vec![b.into()]
                     } else {
@@ -4268,7 +4443,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 }
                 return returval
             }
-            i = hash(k) % map.size
+            i = perfecthash(k) % map.size
             if map.keys[i] == K {
                 returnval.insert(map.values[i])
             }
@@ -4372,8 +4547,38 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 let hash = self
                     .builder
                     .build_call(
-                        self.hash(&k, scopeinfo.clone()),
-                        &[fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                        self.hash_perfect(&k, scopeinfo.clone()),
+                        &[
+                            self.builder
+                                .build_load(
+                                    self.builder
+                                        .build_struct_gep(
+                                            fv.get_nth_param(MAP_PARAM)
+                                                .unwrap()
+                                                .into_pointer_value(),
+                                            CONST_MAP_ARGS_LEN,
+                                            "argslen.ptr",
+                                        )
+                                        .unwrap(),
+                                    "argslen",
+                                )
+                                .into(),
+                            self.builder
+                                .build_load(
+                                    self.builder
+                                        .build_struct_gep(
+                                            fv.get_nth_param(MAP_PARAM)
+                                                .unwrap()
+                                                .into_pointer_value(),
+                                            CONST_MAP_ARGS,
+                                            "args.ptr",
+                                        )
+                                        .unwrap(),
+                                    "args",
+                                )
+                                .into(),
+                            fv.get_nth_param(KEY_PARAM).unwrap().into(),
+                        ],
                         "",
                     )
                     .try_as_basic_value()
@@ -4755,6 +4960,238 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             }
             self.builder.build_return(Some(&returnval));
             self.builder.position_at_end(call_block);
+            fv
+        };
+        fv
+    }
+
+    fn emit_global_map(
+        &mut self,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+        fm: &crate::parser::PerfectMap<'b>,
+    ) -> PointerValue<'ctx> {
+        if let Type::PerfectMap(k, v) = &fm.maptype {
+            let llvmkeytype = self.llvmtype(&k, scopeinfo.clone());
+            let llvmvaluetype = self.llvmtype(&v, scopeinfo.clone());
+
+            let ty = self.llvmstruct(&fm.maptype, scopeinfo.clone());
+            let len = fm.entries.len();
+
+            let mut order: Vec<(usize, u64)> = perfect::get_order(&fm.values, &fm.args)
+                .into_iter()
+                .enumerate()
+                .collect();
+            order.sort_by_key(|k| k.1);
+            let entries: Vec<&(Value, Value)> = order.iter().map(|i| &fm.entries[i.0]).collect();
+
+            let keysptr = {
+                let gv = self.module.add_global(
+                    llvmkeytype.array_type(len as u32),
+                    Some(AddressSpace::default()),
+                    "g.keys",
+                );
+                gv.set_linkage(Linkage::Internal);
+                let vals: &Vec<BasicValueEnum<'_>> = &entries
+                    .iter()
+                    .map(|(c, _)| self.emit_const(c, scopeinfo.clone()))
+                    .collect::<Vec<_>>();
+                let vals = self.llvmconstarray(k, scopeinfo.clone(), vals);
+                gv.set_initializer(&vals.as_basic_value_enum());
+                self.builder.build_bitcast(
+                    gv.as_pointer_value(),
+                    llvmkeytype.ptr_type(AddressSpace::default()),
+                    "",
+                )
+            };
+            let strptr = {
+                let gv = self.module.add_global(
+                    llvmvaluetype.array_type(len as u32),
+                    Some(AddressSpace::default()),
+                    "g.values",
+                );
+                gv.set_linkage(Linkage::Internal);
+                let vals: &Vec<BasicValueEnum<'_>> = &entries
+                    .iter()
+                    .map(|(_, c)| self.emit_const(c, scopeinfo.clone()))
+                    .collect::<Vec<_>>();
+                let vals = self.llvmconstarray(v, scopeinfo.clone(), vals);
+                gv.set_initializer(&vals.as_basic_value_enum());
+                self.builder.build_bitcast(
+                    gv.as_pointer_value(),
+                    llvmvaluetype.ptr_type(AddressSpace::default()),
+                    "",
+                )
+            };
+            let size = self.context.i64_type().const_int(len as u64, false);
+            let argslen = self
+                .context
+                .i32_type()
+                .const_int(fm.args.len() as u64, false)
+                .into();
+            let args = {
+                let gv = self.module.add_global(
+                    self.context.i32_type().array_type(fm.args.len() as u32),
+                    Some(AddressSpace::default()),
+                    "g.args",
+                );
+                gv.set_linkage(Linkage::Internal);
+                let vals: &Vec<BasicValueEnum<'_>> = &fm
+                    .args
+                    .iter()
+                    .map(|c| self.context.i32_type().const_int(*c as u64, false).into())
+                    .collect::<Vec<_>>();
+                let vals = self.llvmconstarray(&Type::Int, scopeinfo.clone(), vals);
+
+                gv.set_initializer(&vals.as_basic_value_enum());
+                self.builder.build_bitcast(
+                    gv.as_pointer_value(),
+                    self.context.i32_type().ptr_type(AddressSpace::default()),
+                    "",
+                )
+            };
+
+            let gv = self
+                .module
+                .add_global(ty, Some(AddressSpace::default()), "g");
+            gv.set_linkage(Linkage::Internal);
+
+            gv.set_initializer(
+                &self
+                    .context
+                    .const_struct(&[size.into(), keysptr, strptr, argslen, args], false),
+            );
+
+            let gv2 = self.module.add_global(
+                self.llvmtype(&fm.maptype, scopeinfo.clone()),
+                Some(AddressSpace::default()),
+                fm.identifier,
+            );
+            gv2.set_linkage(Linkage::Internal);
+            gv2.set_initializer(&gv.as_pointer_value());
+            gv2.as_pointer_value()
+        } else {
+            panic!("should be map")
+        }
+    }
+
+    fn hash_perfect(
+        &mut self,
+        t: &Type<'b>,
+        scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
+    ) -> FunctionValue<'ctx> {
+        const ARGS_LEN_PARAM: u32 = 0;
+        const ARGS_PARAM: u32 = 1;
+        const KEY_PARAM: u32 = 2;
+        let s = format!("hash_perfect_{t}");
+        let fv = if let Some(fv) = self.module.get_function(&s) {
+            fv
+        } else {
+            let args = if Type::Unit.ne(t) {
+                vec![
+                    self.context.i32_type().into(),
+                    self.context
+                        .i32_type()
+                        .ptr_type(AddressSpace::default())
+                        .into(),
+                    self.llvmtype(t, scopeinfo.clone()).into(),
+                ]
+            } else {
+                vec![]
+            };
+            let fv = self.module.add_function(
+                &s,
+                self.llvmfunctiontype(&Type::Int, scopeinfo.clone(), &args, false),
+                None,
+            );
+            let call_block = self.builder.get_insert_block();
+            self.builder
+                .position_at_end(self.context.append_basic_block(fv, "entry"));
+            let hashargs = if Type::Unit.ne(&t) {
+                vec![fv.get_nth_param(KEY_PARAM).unwrap().into()]
+            } else {
+                vec![]
+            };
+            let hash = self
+                .builder
+                .build_call(self.hash(&t, scopeinfo.clone()), &hashargs, "")
+                .try_as_basic_value()
+                .unwrap_left();
+
+            let result = self.builder.build_alloca(self.context.i64_type(), "result");
+            self.builder
+                .build_store(result, self.context.i64_type().const_zero());
+            let idx = self.builder.build_alloca(self.context.i32_type(), "idx");
+            self.builder
+                .build_store(idx, self.context.i32_type().const_zero());
+
+            let whilecond = self.context.append_basic_block(fv, "whilecond");
+            let whilebody = self.context.append_basic_block(fv, "whilebody");
+            let afterwhile = self.context.append_basic_block(fv, "afterwhile");
+            self.builder.build_unconditional_branch(whilecond);
+            self.builder.position_at_end(whilecond);
+            let idxval = self.builder.build_load(idx, "idxval").into_int_value();
+            self.builder.build_conditional_branch(
+                self.builder.build_int_compare(
+                    IntPredicate::ULT,
+                    idxval,
+                    fv.get_nth_param(ARGS_LEN_PARAM).unwrap().into_int_value(),
+                    "",
+                ),
+                whilebody,
+                afterwhile,
+            );
+            self.builder.position_at_end(whilebody);
+            self.builder.build_store(
+                result,
+                self.builder.build_xor(
+                    self.builder.build_load(result, "").into_int_value(),
+                    self.builder
+                        .build_call(
+                            self.module.get_function(ROT).unwrap(),
+                            &[
+                                hash.into(),
+                                hash.into(),
+                                self.builder
+                                    .build_int_z_extend(
+                                        self.builder
+                                            .build_load(
+                                                unsafe {
+                                                    self.builder.build_gep(
+                                                        fv.get_nth_param(ARGS_PARAM)
+                                                            .unwrap()
+                                                            .into_pointer_value(),
+                                                        &[idxval],
+                                                        "",
+                                                    )
+                                                },
+                                                "",
+                                            )
+                                            .into_int_value(),
+                                        self.context.i64_type(),
+                                        "",
+                                    )
+                                    .into(),
+                            ],
+                            "rot",
+                        )
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_int_value(),
+                    "xor",
+                ),
+            );
+            self.builder.build_store(
+                idx,
+                self.builder
+                    .build_int_add(idxval, self.context.i32_type().const_int(1, false), ""),
+            );
+            self.builder.build_unconditional_branch(whilecond);
+            self.builder.position_at_end(afterwhile);
+            self.builder
+                .build_return(Some(&self.builder.build_load(result, "")));
+            if let Some(b) = call_block {
+                self.builder.position_at_end(b);
+            }
             fv
         };
         fv

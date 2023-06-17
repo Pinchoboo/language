@@ -4,14 +4,20 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
+    process::exit,
     rc::Rc,
 };
 
 use derivative::Derivative;
 use once_cell::sync::Lazy;
-use pest::{error::Error, iterators::Pair, pratt_parser::PrattParser, Parser, Span};
+use pest::{
+    error::Error,
+    iterators::{Pair, Pairs},
+    pratt_parser::PrattParser,
+    Parser, Span,
+};
 
-use crate::typecheck::ScopeInfo;
+use crate::typecheck::{ScopeInfo, ConstValue};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -50,6 +56,19 @@ pub struct Program<'a> {
     pub scopeinfo: Rc<RefCell<ScopeInfo<'a>>>,
     pub functions: Vec<Function<'a>>,
     pub structmaps: Vec<StructMap<'a>>,
+    pub findmaps: Vec<PerfectMap<'a>>,
+}
+
+#[derive(Derivative, PartialEq)]
+#[derivative(Debug)]
+pub struct PerfectMap<'a> {
+    pub maptype: Type<'a>,
+    pub identifier: Identifier<'a>,
+    pub entries: Vec<(Value<'a>, Value<'a>)>,
+    pub customindexing: Option<(Identifier<'a>, Vec<Expression<'a>>)>,
+	pub values: Vec<(ConstValue, ConstValue)>,
+	pub args: Vec<u32>,
+	pub nid: i32
 }
 
 #[derive(Derivative, PartialEq, Eq)]
@@ -114,26 +133,26 @@ impl<'i> TryFrom<Pair<'i, Rule>> for Type<'i> {
     type Error = ();
     fn try_from(value: Pair<'i, Rule>) -> Result<Self, Self::Error> {
         if value.as_rule() == Rule::r#type || value.as_rule() == Rule::creatableType {
-            let mut value = value.into_inner();
-            let inner = value.next().ok_or(())?;
-            match inner.as_rule() {
+            let mut inner = value.into_inner();
+            let value = inner.next().ok_or(())?;
+            match value.as_rule() {
                 Rule::intType => Ok(Type::Int),
                 Rule::floatType => Ok(Type::Float),
                 Rule::boolType => Ok(Type::Bool),
                 Rule::charType => Ok(Type::Char),
                 Rule::unitType => Ok(Type::Unit),
                 Rule::mapType => {
-                    let mut inner = inner.into_inner();
+                    let mut inner = value.into_inner();
                     Ok(Type::Map(
                         Box::new(Type::try_from(inner.next().expect("key type to exist"))?),
                         Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
                     ))
                 }
                 Rule::structmapType => {
-                    Ok(Type::StructMap(inner.into_inner().next().unwrap().as_str()))
+                    Ok(Type::StructMap(value.into_inner().next().unwrap().as_str()))
                 }
                 Rule::r#const => {
-                    let mut inner = value.next().unwrap().into_inner();
+                    let mut inner = inner.next().unwrap().into_inner();
                     Ok(Type::PerfectMap(
                         Box::new(Type::try_from(inner.next().expect("key type to exist"))?),
                         Box::new(Type::try_from(inner.next().expect("value type to exist"))?),
@@ -196,7 +215,13 @@ pub enum StatementType<'a> {
         Vec<Expression<'a>>,
         Option<i32>,
     ),
-    For(Identifier<'a>, Identifier<'a>, Value<'a>, Block<'a>, Option<Type<'a>>),
+    For(
+        Identifier<'a>,
+        Identifier<'a>,
+        Value<'a>,
+        Block<'a>,
+        Option<Type<'a>>,
+    ),
 }
 
 #[derive(Debug, PartialEq)]
@@ -225,7 +250,7 @@ impl<'a> Expression<'a> {
 #[derive(Debug, PartialEq)]
 pub enum Value<'a> {
     Int(i64),
-	Float(f64),
+    Float(f64),
     Bool(bool),
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
     Identifier(Identifier<'a>, Option<i32>),
@@ -325,15 +350,17 @@ impl<'a> FileParser {
             .map_err(FileParserError::PestParse)?
             .next()
             .unwrap();
-		
+
         let mut functions = vec![];
         let mut structs = vec![];
+        let mut findmaps = vec![];
         for p in pest_program.clone().into_inner() {
             match p.as_rule() {
                 Rule::structdef => structs.push(self.parse_structdef(p)),
                 Rule::function => {
                     functions.push(self.parse_function(p));
                 }
+                Rule::find => findmaps.push(self.parse_find_map(p)),
                 _ => {
                     panic!("unreachable")
                 }
@@ -348,6 +375,7 @@ impl<'a> FileParser {
             functions,
             structmaps: structs,
             scopeinfo: Rc::new(RefCell::new(ScopeInfo::default())),
+            findmaps,
         })
     }
 
@@ -555,7 +583,7 @@ impl<'a> FileParser {
                                 StatementType::For(
                                     inner.next().expect("identifier").as_str(),
                                     inner.next().expect("identifier").as_str(),
-									self.parse_value(inner.next().expect("value")),
+                                    self.parse_value(inner.next().expect("value")),
                                     self.parse_block(inner.next().expect("block")),
                                     None,
                                 )
@@ -596,18 +624,17 @@ impl<'a> FileParser {
             .parse(pair.into_inner())
     }
 
-    fn parse_value(&'a self, pair: Pair<'a, Rule>) -> Value {
+    fn parse_value(&'a self, pair: Pair<'a, Rule>) -> Value<'a> {
         match pair.as_rule() {
-            //todo handle float
             Rule::number => {
-				if let Ok(v) = pair.as_str().parse::<i64>(){
-					Value::Int(v)
-				}else if let Ok(v) = pair.as_str().parse::<f64>(){
-					Value::Float(v)
-				}else{
-					panic!("invalid number")
-				}
-			},
+                if let Ok(v) = pair.as_str().parse::<i64>() {
+                    Value::Int(v)
+                } else if let Ok(v) = pair.as_str().parse::<f64>() {
+                    Value::Float(v)
+                } else {
+                    panic!("invalid number")
+                }
+            }
             Rule::boolean => Value::Bool(pair.as_str().parse::<bool>().expect("bool")),
             Rule::identifier => Value::Identifier(pair.as_str(), None),
             Rule::call => {
@@ -654,10 +681,52 @@ impl<'a> FileParser {
         }
     }
     fn parse_association(&'a self, p: Pair<'a, Rule>) -> (Identifier<'a>, Type<'a>) {
-        let mut innner = p.into_inner();
+        let mut inner = p.into_inner();
         (
-            innner.next().unwrap().as_str(),
-            innner.next().unwrap().try_into().unwrap(),
+            inner.next().unwrap().as_str(),
+            inner.next().unwrap().try_into().unwrap(),
         )
+    }
+
+    fn parse_find_map(&'a self, p: Pair<'a, Rule>) -> PerfectMap<'a> {
+        let mut inner = p.clone().into_inner();
+        inner.next();
+		
+        PerfectMap {
+            maptype: self.parse_map(inner.next().unwrap()),
+            identifier: inner.next().unwrap().as_str(),
+            entries: self.parse_entries(&mut inner),
+            customindexing: {self.parse_custom_indexing(&mut inner)},
+			values : Vec::with_capacity(0),
+			args : Vec::with_capacity(0),
+			nid : 0
+        }
+    }
+
+    fn parse_entries(&'a self, p: &mut Pairs<'a, Rule>) -> Vec<(Value<'a>, Value<'a>)> {
+        let mut ret = Vec::new();
+        while p.peek().is_some() && p.peek().unwrap().as_rule() == Rule::keyValuePair {
+			let mut i = p.next().unwrap().into_inner();
+            ret.push((
+                self.parse_value(i.next().unwrap()),
+                self.parse_value(i.next().unwrap()),
+            ));
+        }
+        ret
+    }
+
+    fn parse_map(&'a self, p: Pair<'a, Rule>) -> Type<'a> {
+        let mut inner = p.into_inner();
+        Type::PerfectMap(
+            Box::new(Type::try_from(inner.next().expect("key type to exist")).unwrap()),
+            Box::new(Type::try_from(inner.next().expect("value type to exist")).unwrap()),
+        )
+    }
+
+	fn parse_custom_indexing(&'a self, p: &mut Pairs<'a, Rule>) -> Option<(Identifier<'a>, Vec<Expression<'a>>)> {
+        p.next();
+		Some((
+			p.next()?.as_str(), p.into_iter().map(|i|self.parse_expression(i)).collect()
+		))
     }
 }

@@ -1,38 +1,51 @@
-fn int main(){
-	new [int -> int] intmap
-	[int -> int] mapref = intmap
-	[int -> int] mapref2 = f(intmap)
+find perfect [float -> int] test = [
+	6104.548538707682 -> 0
+	2494.622069221747 -> 1
+	1790.765590387361 -> 4
+	5773.177544944898 -> 9
+	3787.061551042865 -> 16
+	2569.9022905969036 -> 25
+	4155.9633710867265 -> 36
+	8204.230117632886 -> 49
+	6519.112341600642 -> 64
+	8588.633974392671 -> 81
+	9449.088871753456 -> 100
+	4661.920717251074 -> 121
+	7724.920246308186 -> 144
+	7742.210845279898 -> 169
+	3086.0507251222134 -> 196
+	2406.1652360448884 -> 225
+]
 
-	printInt(intmap.capacity())
-	printLn()
-	printInt(mapref.size())
-	printLn()
-	printInt(mapref2.tombs())
-	printLn()
-
-	intmap.insert(1234,5678)
-
-	/* undefined behaviour if the key is not in the map */
-	printInt(intmap.get(1234))
-	printLn()
-
-	/* use getMaybe when you are not sure whether the key is in the map */ 
-	[void -> int] maybevalue = intmap.getMaybe(1234)
-	if maybevalue.size() == 1 {
-		/* maybevalue has a value */
-		int v = maybevalue.get()
+fn main(){
+	float f = 2569.9022905969036
+	[void -> int] maybe = test.getMaybe(f)
+	if maybe.size() == 1 {
+		printInt(maybe.get())
+		printLn()
 	}
-	
-	if intmap.remove(1234) {
-		/* the key 1234 was in the map and now it has been removed */
+	f = f + 1.0
+	maybe = test.getMaybe(f)
+	if maybe.size() == 1 {
+		printInt(maybe.get())
+		printLn()
+	}else{
+		printString("key: ")
+		printFloat(2569.9022905969036 + 1.0)
+		printString(" not found, associations are:\n")
+		for k -> v in test {
+			printFloat(k)
+			printString(" -> ")
+			printInt(v)
+			printLn()
+		}
 	}
-
-	intmap.clear()
-	/* removed all key value pairs in the map */
-
-	return 0
 }
 
-fn [int -> int] f([int -> int] input){
-	return input
-}
+fn printString(perfect [int -> char] s) {
+	int i = 0
+	while i < s.size() {
+		printChar(s.get(i))
+		i = i + 1
+	}
+} 
