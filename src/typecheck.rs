@@ -1,7 +1,8 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    rc::Rc, fmt::Display,
+    fmt::Display,
+    rc::Rc,
 };
 
 use derivative::Derivative;
@@ -43,7 +44,7 @@ static BINARY_TABLE: Lazy<HashMap<(Type, BinOp, Type), Type>> = Lazy::new(|| {
     m.insert((Type::Int, BinOp::Smaller, Type::Int), Type::Bool);
     m.insert((Type::Int, BinOp::SmallerEqual, Type::Int), Type::Bool);
 
-	m.insert((Type::Float, BinOp::Add, Type::Float), Type::Float);
+    m.insert((Type::Float, BinOp::Add, Type::Float), Type::Float);
     m.insert((Type::Float, BinOp::And, Type::Float), Type::Float);
     m.insert((Type::Float, BinOp::Divide, Type::Float), Type::Float);
     m.insert((Type::Float, BinOp::Multiply, Type::Float), Type::Float);
@@ -131,9 +132,14 @@ pub fn typecheck(ast: &mut Program) {
     //check perfect hash maps
     for fm in &mut ast.findmaps {
         fm.values = tcc.check_perfect_map(fm);
-		tcc.root.borrow_mut().variables.push((fm.identifier, fm.maptype.clone(), tcc.next_id, None));
-		fm.nid = tcc.next_id;
-		tcc.next_id +=1;
+        tcc.root.borrow_mut().variables.push((
+            fm.identifier,
+            fm.maptype.clone(),
+            tcc.next_id,
+            None,
+        ));
+        fm.nid = tcc.next_id;
+        tcc.next_id += 1;
     }
 
     //check blocks
@@ -535,7 +541,10 @@ impl<'a> TypeCheckContext<'a> {
         }
     }
 
-    fn check_perfect_map(&mut self, fm: &mut crate::parser::PerfectMap<'a>) -> Vec<(ConstValue, ConstValue)> {
+    fn check_perfect_map(
+        &mut self,
+        fm: &mut crate::parser::PerfectMap<'a>,
+    ) -> Vec<(ConstValue, ConstValue)> {
         assert!(
             matches!(fm.maptype, Type::PerfectMap(..)),
             "{fm:?} should be of type map"
@@ -543,19 +552,16 @@ impl<'a> TypeCheckContext<'a> {
 
         if let Type::PerfectMap(k, v) = &fm.maptype {
             let id = fm.identifier;
-            let mut set:HashSet<ConstValue> = HashSet::new();
-			let mut assoc = Vec::new();
+            let mut set: HashSet<ConstValue> = HashSet::new();
+            let mut assoc = Vec::new();
             for e in &mut fm.entries {
                 let key = self.get_const_value(&mut e.0, k);
-				if !set.insert(key.clone()){
-					panic!("duplicate key {:?}", e.0);
-				}
-				assoc.push((
-                    key,
-                    self.get_const_value(&mut e.1, v),
-                ));
+                if !set.insert(key.clone()) {
+                    panic!("duplicate key {:?}", e.0);
+                }
+                assoc.push((key, self.get_const_value(&mut e.1, v)));
             }
-			assoc
+            assoc
         } else {
             panic!("{} should be of type map", fm.identifier);
         }
@@ -566,14 +572,28 @@ impl<'a> TypeCheckContext<'a> {
         match t {
             Type::Unit => todo!(),
             Type::Map(_, _) => todo!(),
-            Type::PerfectMap(_, _) => todo!(),
+            Type::PerfectMap(key, val) => match v {
+                Value::Int(_) => todo!(),
+                Value::Float(_) => todo!(),
+                Value::Bool(_) => todo!(),
+                Value::Call(_, _, _) => todo!(),
+                Value::Identifier(_, _) => todo!(),
+                Value::Char(_) => todo!(),
+                Value::MapCall(_, _, _, _) => todo!(),
+                Value::String(s) => {
+					let str = s.replace("\\n", "\n").into_bytes();
+					ConstValue::Bits(str.iter().enumerate().fold(str.len() as u64, |acc, (p, b)| {
+						acc ^ (*b as u64).rotate_right(p as u32)
+					}))
+				},
+            },
             Type::StructMap(_) => todo!(),
             _ => ConstValue::Bits(match v {
-				Value::Int(i) => *i as u64,
-				Value::Float(i) => i.to_bits(),
-				Value::Bool(b) => *b as u64,
-				_ => panic!("invalid")
-			}),
+                Value::Int(i) => *i as u64,
+                Value::Float(i) => i.to_bits(),
+                Value::Bool(b) => *b as u64,
+                _ => panic!("invalid"),
+            }),
         }
     }
 }

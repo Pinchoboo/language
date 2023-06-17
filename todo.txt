@@ -14,8 +14,7 @@ flat hash set sse instructions 16 probe
 
 const <int,char> = "test"
 
-6 perfect hashing
-8. optimise
+8. custom key
 9. void in mapstruct
 10. insert clone | manual rehash or clone
 

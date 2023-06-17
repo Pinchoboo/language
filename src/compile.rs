@@ -1140,19 +1140,28 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         self.builder
                             .build_int_mul(lv.into_int_value(), rv.into_int_value(), ""),
                     ),
-					
-					(Type::Float, BinOp::Add, Type::Float) => BasicValueEnum::FloatValue(
-                        self.builder
-                            .build_float_add(lv.into_float_value(), rv.into_float_value(), ""),
-                    ),
-                    (Type::Float, BinOp::Subtract, Type::Float) => BasicValueEnum::FloatValue(
-                        self.builder
-                            .build_float_sub(lv.into_float_value(), rv.into_float_value(), ""),
-                    ),
-                    (Type::Float, BinOp::Multiply, Type::Float) => BasicValueEnum::FloatValue(
-                        self.builder
-                            .build_float_mul(lv.into_float_value(), rv.into_float_value(), ""),
-                    ),
+
+                    (Type::Float, BinOp::Add, Type::Float) => {
+                        BasicValueEnum::FloatValue(self.builder.build_float_add(
+                            lv.into_float_value(),
+                            rv.into_float_value(),
+                            "",
+                        ))
+                    }
+                    (Type::Float, BinOp::Subtract, Type::Float) => {
+                        BasicValueEnum::FloatValue(self.builder.build_float_sub(
+                            lv.into_float_value(),
+                            rv.into_float_value(),
+                            "",
+                        ))
+                    }
+                    (Type::Float, BinOp::Multiply, Type::Float) => {
+                        BasicValueEnum::FloatValue(self.builder.build_float_mul(
+                            lv.into_float_value(),
+                            rv.into_float_value(),
+                            "",
+                        ))
+                    }
 
                     (Type::Int, BinOp::Smaller, Type::Int) => {
                         BasicValueEnum::IntValue(self.builder.build_int_compare(
@@ -2835,7 +2844,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             match t {
                 Type::Map(k, v) => {
                     /*
-                    int h = 0
+                    int h = capacity
                     int idx = 0
                     while idx < map.capacity {
                         if map.state[idx] == TAKEN {
@@ -2846,12 +2855,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     return hash
 
                     */
-                    let h = self.builder.build_alloca(self.context.i64_type(), "h");
-                    self.builder
-                        .build_store(h, self.context.i64_type().const_zero());
-                    let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
-                    self.builder
-                        .build_store(idx, self.context.i64_type().const_zero());
+
                     let map = fv.get_first_param().unwrap().into_pointer_value();
                     let capacity = self
                         .builder
@@ -2862,6 +2866,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             "capacity",
                         )
                         .into_int_value();
+                    let h = self.builder.build_alloca(self.context.i64_type(), "h");
+                    self.builder.build_store(h, capacity);
+                    let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                    self.builder
+                        .build_store(idx, self.context.i64_type().const_zero());
 
                     let mapstates = self
                         .builder
@@ -3013,21 +3022,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 }
                 Type::PerfectMap(k, v) => {
                     /*
-                    int h = 0
+                    int h = map.size
                     int idx = 0
                     while idx < map.size {
-                        h = h + hash(map.keys[idx]) + hash(map.values[idx])
+                        h = h ^ (hash(map.values[idx]) rot by hash(map.keys[idx]))
                         idx = idx + 1
                     }
                     return hash
 
                     */
-                    let h = self.builder.build_alloca(self.context.i64_type(), "h");
-                    self.builder
-                        .build_store(h, self.context.i64_type().const_zero());
-                    let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
-                    self.builder
-                        .build_store(idx, self.context.i64_type().const_zero());
                     let map = fv.get_first_param().unwrap().into_pointer_value();
                     let size = self
                         .builder
@@ -3038,6 +3041,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             "size",
                         )
                         .into_int_value();
+                    let h = self.builder.build_alloca(self.context.i64_type(), "h");
+                    self.builder.build_store(h, size);
+                    let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                    self.builder
+                        .build_store(idx, self.context.i64_type().const_zero());
 
                     let mapkeys = self
                         .builder
@@ -3117,15 +3125,22 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         )
                         .try_as_basic_value()
                         .unwrap_left();
+
+                    //h = h ^ (hash(map.values[idx]) rot by hash(map.keys[idx]))
+                    //vh kh
                     self.builder.build_store(
                         h,
-                        self.builder.build_int_add(
+                        self.builder.build_xor(
                             self.builder.build_load(h, "").into_int_value(),
-                            self.builder.build_int_add(
-                                vh.into_int_value(),
-                                kh.into_int_value(),
-                                "",
-                            ),
+                            self.builder
+                                .build_call(
+                                    self.module.get_function(ROT).unwrap(),
+                                    &[vh.into(), vh.into(), kh.into()],
+                                    "",
+                                )
+                                .try_as_basic_value()
+                                .unwrap_left()
+                                .into_int_value(),
                             "",
                         ),
                     );
