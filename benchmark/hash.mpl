@@ -1,5 +1,5 @@
 fn main(){
-	printInt(fillAndLoop(100))
+	
 }
 
 fn int fillAndLoop(int size){

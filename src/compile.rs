@@ -8,7 +8,7 @@ use std::{
 
 use inkwell::{
     builder::Builder,
-    context::{Context, self},
+    context::{self, Context},
     execution_engine::{JitFunction, UnsafeFunctionPointer},
     module::{Linkage, Module},
     targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple},
@@ -40,7 +40,12 @@ pub struct Compiler<'ctx, 'a, 'b> {
     structbodies: Vec<(StructType<'ctx>, Vec<BasicTypeEnum<'ctx>>)>,
 }
 
-pub fn compile<'ctx, 'a, 'b>(context: &'ctx Context, builder: &'a Builder<'ctx>, module: &'a Module<'ctx>, program: Program<'b>) -> Compiler<'ctx, 'a, 'b>{
+pub fn compile<'ctx, 'a, 'b>(
+    context: &'ctx Context,
+    builder: &'a Builder<'ctx>,
+    module: &'a Module<'ctx>,
+    program: Program<'b>,
+) -> Compiler<'ctx, 'a, 'b> {
     let mut c = Compiler {
         context,
         module,
@@ -51,7 +56,7 @@ pub fn compile<'ctx, 'a, 'b>(context: &'ctx Context, builder: &'a Builder<'ctx>,
         structbodies: Vec::new(),
     };
     c.compile(program);
-	c
+    c
 }
 
 pub const CONST_MAP_SIZE: u32 = 0;
@@ -3194,25 +3199,35 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         fn rehash(map) {
             newcapacity = map.size * 2 + 16
             newkeys = malloc newcapacity
-            newvalues = malloc newcapacity
+            IF V != VOID{
+                newvalues = malloc newcapacity
+            }
             newstates = calloc newcapacity
             for i in 0 .. map.capacity {
                 if map.states[i] = TAKEN {
                     k = map.keys[i]
-                    v = map.values[i]
+                    IF V != VOID{
+                        v = map.values[i]
+                    }
+
                     newi = hash(k) % newcapacity
                     while newstates[newi] == TAKEN{
                         newi = (newi + 1) % newcapacity
                     }
                     newkeys[newi] = K
-                    newvalues[newi] = map.values[i]
+                    IF V != VOID{
+                        newvalues[newi] = map.values[i]
+                    }
                     newstates[newi] = TAKEN
                 }
             }
             free map.keys
             map.keys = newkeys
             free map.values
-            map.values = newvalues
+            IF V != VOID{
+                free map.values
+                map.values = newvalues
+            }
             free map.states
             map.states = newstates
             map.tombs = 0
@@ -3265,15 +3280,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .build_load(mapkeysptr, "map.keys")
                     .into_pointer_value();
 
-                let mapvaluesptr = self
-                    .builder
-                    .build_struct_gep(map, map_values(&k), "map.values.ptr")
-                    .unwrap();
-                let mapvalues = self
-                    .builder
-                    .build_load(mapvaluesptr, "map.values")
-                    .into_pointer_value();
-
                 let newcap = self.builder.build_int_add(
                     self.builder.build_int_mul(
                         self.builder
@@ -3297,10 +3303,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .builder
                     .build_array_malloc(llvmk, newcap, "newkeys")
                     .unwrap();
-                let newvalues = self
-                    .builder
-                    .build_array_malloc(llvmv, newcap, "newvalues")
-                    .unwrap();
+                let newvalues = if Type::Unit.ne(v) {
+                    Some(
+                        self.builder
+                            .build_array_malloc(llvmv, newcap, "newvalues")
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                };
                 let newstates = self.emit_calloc(
                     self.context.i64_type(),
                     self.builder
@@ -3370,10 +3381,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     unsafe { self.builder.build_gep(mapkeys, &[ival], "") },
                     "key",
                 );
-                let value = self.builder.build_load(
-                    unsafe { self.builder.build_gep(mapvalues, &[ival], "") },
-                    "value",
-                );
+
                 self.builder.build_store(
                     newiptr,
                     self.builder.build_int_unsigned_rem(
@@ -3424,10 +3432,28 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     unsafe { self.builder.build_gep(newkeys, &[newival], "newkeys_i") },
                     key,
                 );
-                self.builder.build_store(
-                    unsafe { self.builder.build_gep(newvalues, &[newival], "newvalues_i") },
-                    value,
-                );
+                if Type::Unit.ne(v) {
+                    let mapvaluesptr = self
+                        .builder
+                        .build_struct_gep(map, map_values(&k), "map.values.ptr")
+                        .unwrap();
+                    let mapvalues = self
+                        .builder
+                        .build_load(mapvaluesptr, "map.values")
+                        .into_pointer_value();
+                    let value = self.builder.build_load(
+                        unsafe { self.builder.build_gep(mapvalues, &[ival], "") },
+                        "value",
+                    );
+                    self.builder.build_store(
+                        unsafe {
+                            self.builder
+                                .build_gep(newvalues.unwrap(), &[newival], "newvalues_i")
+                        },
+                        value,
+                    );
+                }
+
                 self.builder.build_store(
                     unsafe { self.builder.build_gep(newstates, &[newival], "newstates_i") },
                     self.context.i64_type().const_int(STATE_TAKEN, false),
@@ -3439,9 +3465,18 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
 
                 self.builder.build_free(mapkeys);
                 self.builder.build_store(mapkeysptr, newkeys);
-
-                self.builder.build_free(mapvalues);
-                self.builder.build_store(mapvaluesptr, newvalues);
+                if Type::Unit.ne(v) {
+                    let mapvaluesptr = self
+                        .builder
+                        .build_struct_gep(map, map_values(&k), "map.values.ptr")
+                        .unwrap();
+                    let mapvalues = self
+                        .builder
+                        .build_load(mapvaluesptr, "map.values")
+                        .into_pointer_value();
+                    self.builder.build_free(mapvalues);
+                    self.builder.build_store(mapvaluesptr, newvalues.unwrap());
+                }
 
                 self.builder.build_free(mapstates);
                 self.builder.build_store(mapstatesptr, newstates);

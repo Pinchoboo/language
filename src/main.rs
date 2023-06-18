@@ -15,6 +15,7 @@ mod functions;
 mod parser;
 mod perfect;
 mod typecheck;
+mod benchmark;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
