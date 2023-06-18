@@ -1,14 +1,15 @@
 fn main(){
-	printInt(fillAndLoop(100))
+	dropHashSet(hashSetFill(100))
 }
 
-fn int fillAndLoop(int size){
-	new [int -> void] map
-	while map.size() < size{
-		map.insert(map.size())
-	} 
-	for k -> v in map {
-		map.remove(k)
+fn [int->void] hashSetFill(int size) {
+	new [int->void] set
+	while set.size() < size {
+		set.insert(set.size())
 	}
-	return map.size()
+	return set
+}
+
+fn dropHashSet([int->void] set){
+	free set
 }

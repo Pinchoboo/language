@@ -9,7 +9,7 @@ use std::{
 use inkwell::{
     builder::Builder,
     context::{self, Context},
-    execution_engine::{JitFunction, UnsafeFunctionPointer},
+    execution_engine::{ExecutionEngine, JitFunction, UnsafeFunctionPointer},
     module::{Linkage, Module},
     targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple},
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
@@ -38,6 +38,7 @@ pub struct Compiler<'ctx, 'a, 'b> {
     strings: Rc<RefCell<HashMap<String, PointerValue<'ctx>>>>,
     mapstructs: HashMap<Type<'b>, StructType<'ctx>>,
     structbodies: Vec<(StructType<'ctx>, Vec<BasicTypeEnum<'ctx>>)>,
+    ee: Option<ExecutionEngine<'ctx>>,
 }
 
 pub fn compile<'ctx, 'a, 'b>(
@@ -54,6 +55,7 @@ pub fn compile<'ctx, 'a, 'b>(
         strings: Rc::new(RefCell::new(HashMap::new())),
         mapstructs: HashMap::new(),
         structbodies: Vec::new(),
+        ee: None,
     };
     c.compile(program);
     c
@@ -456,13 +458,17 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 println!("LLVM-IR compiled succesfully")
             }
         }
+        if self.ee.is_none() {
+            self.ee = Some(
+                self.module
+                    .create_jit_execution_engine(OptimizationLevel::Aggressive)
+                    .unwrap(),
+            );
+        };
     }
 
     pub fn execute(&self) -> i32 {
-        unsafe {
-            self.get_function::<unsafe extern "C" fn() -> i32>("main")
-                .call()
-        }
+        unsafe { self.get_function::<unsafe extern "C" fn() -> i32>("main")() }
     }
 
     fn emit_printf_call(
@@ -498,19 +504,17 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         pointer_value
     }
 
-    pub fn get_function<F: UnsafeFunctionPointer>(&self, fname: &str) -> JitFunction<'_, F> {
-        let ee = self
-            .module
-            .create_jit_execution_engine(OptimizationLevel::Aggressive)
-            .unwrap();
-        let maybe_fn = unsafe { ee.get_function::<F>(fname) };
-
-        match maybe_fn {
-            Ok(f) => f,
-            Err(err) => {
-                panic!("{:?}", err);
-            }
+    pub fn get_function<F: UnsafeFunctionPointer>(&self, fname: &str) -> F {
+        if let Some(ee) = &self.ee {
+            let maybe_fn = unsafe { self.ee.as_ref().unwrap().get_function::<F>(fname) };
+            return match maybe_fn {
+                Ok(f) => unsafe { f.as_raw() },
+                Err(err) => {
+                    panic!("{:?}", err);
+                }
+            };
         }
+        unreachable!()
     }
 
     fn emit_block(&mut self, body: &Block<'b>, fv: FunctionValue<'ctx>) {
@@ -711,6 +715,28 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             "states",
                         )
                         .into_pointer_value();
+                    let kd =
+                        typecheck::find_variable(keyid, block.scopeinfo.clone()).expect("exist");
+                    let vd =
+                        typecheck::find_variable(valid, block.scopeinfo.clone()).expect("exist");
+                    let kpointer = if kd.1.ne(&Type::Unit) {
+                        let p = self
+                            .builder
+                            .build_alloca(self.llvmtype(&k, scopeinfo.clone()), "kpointer");
+                        self.vars.insert(kd.2, p);
+                        Some(p)
+                    } else {
+                        None
+                    };
+                    let valueptr = if vd.1.ne(&Type::Unit) {
+                        let p = self
+                            .builder
+                            .build_alloca(self.llvmtype(&v, scopeinfo.clone()), "vpointer");
+                        self.vars.insert(vd.2, p);
+                        Some(p)
+                    } else {
+                        None
+                    };
 
                     let whilecond = self.context.append_basic_block(fv, "whilecond");
                     let whilebody = self.context.append_basic_block(fv, "whilebody");
@@ -746,18 +772,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     );
                     self.builder.position_at_end(validentry);
 
-                    let kd =
-                        typecheck::find_variable(keyid, block.scopeinfo.clone()).expect("exist");
                     if kd.1.ne(&Type::Unit) {
-                        let kpointer = {
-                            let p = self
-                                .builder
-                                .build_alloca(self.llvmtype(&k, scopeinfo.clone()), "kpointer");
-                            self.vars.insert(kd.2, p);
-                            p
-                        };
                         self.builder.build_store(
-                            kpointer,
+                            kpointer.unwrap(),
                             self.builder.build_load(
                                 unsafe {
                                     self.builder.build_gep(
@@ -781,15 +798,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     let vd =
                         typecheck::find_variable(valid, block.scopeinfo.clone()).expect("exist");
                     if vd.1.ne(&Type::Unit) {
-                        let valueptr = {
-                            let p = self
-                                .builder
-                                .build_alloca(self.llvmtype(&v, scopeinfo.clone()), "vpointer");
-                            self.vars.insert(vd.2, p);
-                            p
-                        };
                         self.builder.build_store(
-                            valueptr,
+                            valueptr.unwrap(),
                             self.builder.build_load(
                                 unsafe {
                                     self.builder.build_gep(
