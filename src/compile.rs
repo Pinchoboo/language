@@ -434,13 +434,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             } else {
                 println!("LLVM-IR is valid")
             }
-            self.opt_module = Some(
-                self.context
-                    .create_module_from_ir(
-                        MemoryBuffer::create_from_file(Path::new("./out/program.opt.ll")).unwrap(),
-                    )
-                    .unwrap(),
-            );
             /*
             if let Err(e) = self.module.verify() {
                 println!("{}", e.to_string());
@@ -451,26 +444,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             //save executable
             Target::initialize_x86(&InitializationConfig::default());
 
-            let opt = OptimizationLevel::Aggressive;
-            let reloc = RelocMode::Default;
-            let model = CodeModel::Default;
-            let target = Target::from_name("x86-64").unwrap();
-            let _target_machine = target
-                .create_target_machine(
-                    &TargetTriple::create("x86_64-pc-linux-gnu"),
-                    "x86-64",
-                    "+avx2",
-                    opt,
-                    reloc,
-                    model,
-                )
-                .unwrap();
-
             /*let _result = target_machine.write_to_file(
                 &module,
                 FileType::Assembly,
                 Path::new("./out/main.asm"),
             );*/
+
             let err = Command::new("clang")
                 .arg("-no-pie")
                 .arg("./out/program.ll")
@@ -478,10 +457,21 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .arg("./out/program")
                 .arg("-g")
                 .arg("-O3")
-				.arg("-fsanitize=address")
+                .arg("-fsanitize=address")
+                .arg("-Weverything")
+                .arg("-Wextra")
+                .arg("-Wall")
                 .output()
                 .unwrap()
                 .stderr;
+
+            self.opt_module = Some(
+                self.context
+                    .create_module_from_ir(
+                        MemoryBuffer::create_from_file(Path::new("./out/program.opt.ll")).unwrap(),
+                    )
+                    .unwrap(),
+            );
 
             if !err.is_empty() {
                 println!("{}", std::str::from_utf8(&err).unwrap());
@@ -2541,11 +2531,17 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             let call_block = self.builder.get_insert_block().unwrap();
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
-            if Type::Float.eq(k){
-				self.debug("INSERT KEY:%f\n", [fv.get_nth_param(KEY_PARAM).unwrap().into()]);
-			}else{
-				self.debug("INSERT KEY:%lu\n", [fv.get_nth_param(KEY_PARAM).unwrap().into()]);
-			}
+            if Type::Float.eq(k) {
+                self.debug(
+                    "INSERT KEY:%f\n",
+                    [fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                );
+            } else {
+                self.debug(
+                    "INSERT KEY:%lu\n",
+                    [fv.get_nth_param(KEY_PARAM).unwrap().into()],
+                );
+            }
             /*
             insert(map, k, v) {
                 IF K NOT UNIT {
@@ -2575,6 +2571,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 }
             }
             */
+			
             let sizeptr = self
                 .builder
                 .build_struct_gep(
@@ -2584,6 +2581,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 )
                 .unwrap();
             let size = self.builder.build_load(sizeptr, "size");
+			self.debug("\t SIZE: 0x%lx\n",[sizeptr.into()]);
 
             let tombsptr = self
                 .builder
@@ -2593,8 +2591,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     &(id.to_string() + ".tombs.ptr"),
                 )
                 .unwrap();
-            let tombs = self.builder.build_load(tombsptr, "tombs");
-
+            self.debug("\t TOMBS: 0x%lx\n",[tombsptr.into()]);
+			let tombs = self.builder.build_load(tombsptr, "tombs");
+			
             let capacity_before_rehash = self.builder.build_load(
                 self.builder
                     .build_struct_gep(
@@ -3378,10 +3377,13 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     "REHASHING with capacity %lu -> %lu\n",
                     [oldcap.into(), newcap.into()],
                 );
-                self.debug("\tmalloc(%lu) \n", [self
-				.builder
-				.build_int_mul(llvmk.size_of().unwrap(), newcap, "")
-				.into()]);
+                self.debug(
+                    "\tmalloc(%lu) \n",
+                    [self
+                        .builder
+                        .build_int_mul(llvmk.size_of().unwrap(), newcap, "")
+                        .into()],
+                );
                 let newkeys = self
                     .builder
                     .build_array_malloc(

@@ -1,8 +1,9 @@
-fn main(){
+fn int main(){
 	int size = 1000000
 	[int->int] m = hashMapFillHalf(size)
 	printInt(hashMapLookup(m, size))
 	dropHashMap(m)
+	return 0
 }
 
 fn [int->int] hashMapFillHalf(int size) {

@@ -1,7 +1,8 @@
-fn main(){
-	[float->void] s = hashSetFloatFill(1000)
+fn int main(){
+	[float->void] s = hashSetFloatFill(100000)
 	printInt(s.size())
 	free s
+	return 0
 }
 
 fn [int->void] hashSetFill(int size) {
