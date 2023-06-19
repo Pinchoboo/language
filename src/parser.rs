@@ -95,10 +95,10 @@ pub enum Type<'a> {
 impl<'a> Display for Type<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Int => f.write_str("int"),
-            Type::Float => f.write_str("float"),
-            Type::Bool => f.write_str("bool"),
-            Type::Char => f.write_str("char"),
+            Type::Int => f.write_str("u64"),
+            Type::Float => f.write_str("u64"),
+            Type::Bool => f.write_str("u1"),
+            Type::Char => f.write_str("u8"),
             Type::Unit => f.write_str("void"),
             Type::Map(k, v) => {
                 {

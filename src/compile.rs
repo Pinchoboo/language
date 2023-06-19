@@ -34,24 +34,24 @@ const MEMSET: &str = "memset";
 const CALLOC: &str = "calloc";
 const MALLOC: &str = "malloc";
 
-pub struct Compiler<'ctx, 'a, 'b> {
+pub struct Compiler<'ctx, 'a> {
     context: &'ctx Context,
     builder: &'a Builder<'ctx>,
     module: &'a Module<'ctx>,
     opt_module: Option<Module<'ctx>>,
     vars: HashMap<i32, PointerValue<'ctx>>,
     strings: Rc<RefCell<HashMap<String, PointerValue<'ctx>>>>,
-    mapstructs: HashMap<Type<'b>, StructType<'ctx>>,
+    mapstructs: HashMap<String, StructType<'ctx>>,
     structbodies: Vec<(StructType<'ctx>, Vec<BasicTypeEnum<'ctx>>)>,
     ee: Option<ExecutionEngine<'ctx>>,
 }
 
-pub fn compile<'ctx, 'a, 'b>(
+pub fn compile<'ctx, 'a>(
     context: &'ctx Context,
     builder: &'a Builder<'ctx>,
     module: &'a Module<'ctx>,
-    program: Program<'b>,
-) -> Compiler<'ctx, 'a, 'b> {
+    program: Program,
+) -> Compiler<'ctx, 'a> {
     let mut c = Compiler {
         context,
         module,
@@ -96,7 +96,8 @@ pub const STATE_TOMB: u64 = 2;
 
 const ROT: &str = "llvm.fshr.i64";
 
-impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
+impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
+
     fn llvmstruct(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> StructType<'ctx> {
         match t {
             Type::Map(k, v) => {
@@ -132,7 +133,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .into_iter()
                     .flatten()
                     .collect();
-                *self.mapstructs.entry(t.clone()).or_insert({
+                *self.mapstructs.entry(format!("{t}")).or_insert({
                     let st = self.context.opaque_struct_type(&struct_name);
                     st.set_body(field_types.as_slice(), false);
                     st
@@ -148,7 +149,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 let argslen = self.context.i32_type();
                 let args = self.context.i32_type().ptr_type(AddressSpace::default());
 
-                *self.mapstructs.entry(t.clone()).or_insert({
+                *self.mapstructs.entry(format!("{t}")).or_insert({
                     let st = self.context.opaque_struct_type(&struct_name);
                     st.set_body(
                         &[
@@ -169,9 +170,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 let struct_name = format!("{t}_{n}");
                 let size = self.context.i64_type();
 
-                if !self.mapstructs.contains_key(t) {
+                if let std::collections::hash_map::Entry::Vacant(e) = self.mapstructs.entry(format!("{t}")) {
                     let st = self.context.opaque_struct_type(&struct_name);
-                    self.mapstructs.insert(t.clone(), st);
+                    e.insert(st);
                     let mut fieldtypes = vec![
                         size.into(),
                         self.llvmtype(&Type::Bool, si.clone())
@@ -184,7 +185,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     st.set_body(&fieldtypes, false);
                 }
 
-                *self.mapstructs.get(&t.clone()).unwrap()
+                *self.mapstructs.get(&format!("{t}")).unwrap()
             }
             _ => {
                 assert!(matches!(t, Type::Map { .. }));
@@ -196,7 +197,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
     fn llvmtype(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> BasicTypeEnum<'ctx> {
         match t {
             Type::Int => self.context.i64_type().as_basic_type_enum(),
-            Type::Float => self.context.f64_type().as_basic_type_enum(),
+            Type::Float => self.context.i64_type().as_basic_type_enum(),
             Type::Bool => self.context.bool_type().as_basic_type_enum(),
             Type::Char => self.context.i8_type().as_basic_type_enum(),
             Type::Unit => self.context.custom_width_int_type(0).as_basic_type_enum(),
@@ -457,7 +458,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .arg("./out/program")
                 .arg("-g")
                 .arg("-O3")
-                .arg("-fsanitize=address")
+                //                .arg("-fsanitize=address")
                 .arg("-Weverything")
                 .arg("-Wextra")
                 .arg("-Wall")
@@ -1196,27 +1197,45 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             .build_int_mul(lv.into_int_value(), rv.into_int_value(), ""),
                     ),
 
-                    (Type::Float, BinOp::Add, Type::Float) => {
-                        BasicValueEnum::FloatValue(self.builder.build_float_add(
-                            lv.into_float_value(),
-                            rv.into_float_value(),
+                    (Type::Float, BinOp::Add, Type::Float) => self.builder.build_bitcast(
+                        self.builder.build_float_add(
+                            self.builder
+                                .build_bitcast(lv, self.context.f64_type(), "")
+                                .into_float_value(),
+                            self.builder
+                                .build_bitcast(rv, self.context.f64_type(), "")
+                                .into_float_value(),
                             "",
-                        ))
-                    }
-                    (Type::Float, BinOp::Subtract, Type::Float) => {
-                        BasicValueEnum::FloatValue(self.builder.build_float_sub(
-                            lv.into_float_value(),
-                            rv.into_float_value(),
+                        ),
+                        self.context.i64_type(),
+                        "",
+                    ),
+                    (Type::Float, BinOp::Subtract, Type::Float) => self.builder.build_bitcast(
+                        self.builder.build_float_sub(
+                            self.builder
+                                .build_bitcast(lv, self.context.f64_type(), "")
+                                .into_float_value(),
+                            self.builder
+                                .build_bitcast(rv, self.context.f64_type(), "")
+                                .into_float_value(),
                             "",
-                        ))
-                    }
-                    (Type::Float, BinOp::Multiply, Type::Float) => {
-                        BasicValueEnum::FloatValue(self.builder.build_float_mul(
-                            lv.into_float_value(),
-                            rv.into_float_value(),
+                        ),
+                        self.context.i64_type(),
+                        "",
+                    ),
+                    (Type::Float, BinOp::Multiply, Type::Float) => self.builder.build_bitcast(
+                        self.builder.build_float_mul(
+                            self.builder
+                                .build_bitcast(lv, self.context.f64_type(), "")
+                                .into_float_value(),
+                            self.builder
+                                .build_bitcast(rv, self.context.f64_type(), "")
+                                .into_float_value(),
                             "",
-                        ))
-                    }
+                        ),
+                        self.context.i64_type(),
+                        "",
+                    ),
 
                     (Type::Int, BinOp::Smaller, Type::Int) => {
                         BasicValueEnum::IntValue(self.builder.build_int_compare(
@@ -1324,10 +1343,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .i64_type()
                     .const_int((*n).try_into().unwrap(), false),
             ),
-            Value::Float(n) => BasicValueEnum::FloatValue(self.context.f64_type().const_float(*n)),
+            Value::Float(n) => self.builder.build_bitcast(
+                self.context.f64_type().const_float(*n),
+                self.context.i64_type(),
+                "",
+            ),
             Value::Char(c) => BasicValueEnum::IntValue(
                 self.context
-                    .i64_type()
+                    .i8_type()
                     .const_int((*c as u32).try_into().unwrap(), false),
             ),
             Value::Bool(b) => BasicValueEnum::IntValue(
@@ -2502,7 +2525,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         maptype: &Type<'b>,
         scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
     ) -> FunctionValue {
-        let fname = format!("{}_insert", &maptype);
+        let fname = if !matches!(maptype, Type::Map(k, v) if Type::Float.eq(k) || Type::Int.eq(k) )
+        {
+            format!("{}_insert", &maptype)
+        } else {
+            match maptype {
+                Type::Map(_, v) => format!("{}_insert", &Type::Map(Box::new(Type::Int), v.clone())),
+                _ => unreachable!()
+            }
+        };
         if let Some(fv) = self.module.get_function(&fname) {
             fv
         } else if let Type::Map(k, v) = maptype {
@@ -2571,7 +2602,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 }
             }
             */
-			
+
             let sizeptr = self
                 .builder
                 .build_struct_gep(
@@ -2581,7 +2612,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 )
                 .unwrap();
             let size = self.builder.build_load(sizeptr, "size");
-			self.debug("\t SIZE: 0x%lx\n",[sizeptr.into()]);
 
             let tombsptr = self
                 .builder
@@ -2591,9 +2621,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     &(id.to_string() + ".tombs.ptr"),
                 )
                 .unwrap();
-            self.debug("\t TOMBS: 0x%lx\n",[tombsptr.into()]);
-			let tombs = self.builder.build_load(tombsptr, "tombs");
-			
+
+            let tombs = self.builder.build_load(tombsptr, "tombs");
+
             let capacity_before_rehash = self.builder.build_load(
                 self.builder
                     .build_struct_gep(
@@ -2604,6 +2634,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .unwrap(),
                 "capacity",
             );
+
             if Type::Unit.ne(k) {
                 let rehashblock = self.context.append_basic_block(fv, "rehash");
                 let afterhash = self.context.append_basic_block(fv, "afterhash");
@@ -2743,11 +2774,16 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 self.builder.position_at_end(whilebody);
                 self.builder.build_store(
                     idx,
-                    self.builder.build_int_add(
-                        self.builder.build_load(idx, "").into_int_value(),
-                        self.context.i64_type().const_int(1, false),
-                        "",
-                    ),
+					self.builder.build_int_unsigned_rem(
+						self.builder.build_int_add(
+							self.builder.build_load(idx, "").into_int_value(),
+							self.context.i64_type().const_int(1, false),
+							"",
+						),
+						capacity.into_int_value(),
+						"",
+					)
+                    ,
                 );
                 self.builder.build_unconditional_branch(whilecond);
 
@@ -3811,21 +3847,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     self.builder
                         .build_return(Some(&self.context.bool_type().const_all_ones()));
                 }
-                Type::Int | Type::Bool | Type::Char => {
+                Type::Int | Type::Bool | Type::Char | Type::Float => {
                     self.builder
                         .build_return(Some(&self.builder.build_int_compare(
                             IntPredicate::EQ,
                             fv.get_nth_param(0).unwrap().into_int_value(),
                             fv.get_nth_param(1).unwrap().into_int_value(),
-                            "eq",
-                        )));
-                }
-                Type::Float => {
-                    self.builder
-                        .build_return(Some(&self.builder.build_float_compare(
-                            FloatPredicate::UEQ,
-                            fv.get_nth_param(0).unwrap().into_float_value(),
-                            fv.get_nth_param(1).unwrap().into_float_value(),
                             "eq",
                         )));
                 }

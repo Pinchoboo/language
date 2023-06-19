@@ -1,7 +1,10 @@
 fn int main(){
-	[float->void] s = hashSetFloatFill(100000)
-	printInt(s.size())
-	free s
+	[int->void] si = hashSetFill(100000)
+	printInt(si.size())
+	free si
+	[float->void] sf = hashSetFloatFill(100000)
+	printInt(sf.size())
+	free sf
 	return 0
 }
 

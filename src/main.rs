@@ -18,6 +18,7 @@ mod typecheck;
 mod benchmark;
 
 fn main() {
+	env::set_var("RUST_BACKTRACE", "1");
     let args: Vec<String> = env::args().collect();
     let path: &str = args.get(1).map(|s| (s.as_str())).unwrap_or("./main.mpl");
     let fp = parser::FileParser::new(path).unwrap();

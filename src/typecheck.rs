@@ -91,9 +91,9 @@ pub fn typecheck(ast: &mut Program) {
     };
 
     //check for single main function
-    if !ast.functions.iter().any(|f| f.identifier.eq("main")) {
+    /*if !ast.functions.iter().any(|f| f.identifier.eq("main")) {
         panic!("could not find a top level main function")
-    }
+    }*/
 
     //check for duplicate functions
     let mut functions = HashSet::new();
