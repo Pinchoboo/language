@@ -97,8 +97,8 @@ equal        = { "==" }
 notEqual     = { "!=" }
 greater      = { ">" }
 smaller      = { "<" }
-greaterEqual = { "<=" }
-smallerEqual = { ">=" }
+greaterEqual = { ">=" }
+smallerEqual = { "<=" }
 
 unop = _{
     negate

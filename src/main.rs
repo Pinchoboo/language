@@ -24,8 +24,8 @@ fn main() {
     let mut ast = fp.parse().expect("expect no parsing problems");
 	check(&mut ast);
     let context = Context::create();
-    let builder = &context.create_builder();
-    let module = &context.create_module("module");
+    let builder = &mut context.create_builder();
+    let module = &mut context.create_module("module");
     let compiler = compile::compile(&context, builder, module, ast);
 	exit(compiler.execute());
 }

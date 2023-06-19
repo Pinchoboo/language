@@ -2,6 +2,8 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     iter::once_with,
+    mem,
+    path::Path,
     process::{exit, Command},
     rc::Rc,
 };
@@ -10,6 +12,7 @@ use inkwell::{
     builder::Builder,
     context::{self, Context},
     execution_engine::{ExecutionEngine, JitFunction, UnsafeFunctionPointer},
+    memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
     targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple},
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
@@ -34,6 +37,7 @@ pub struct Compiler<'ctx, 'a, 'b> {
     context: &'ctx Context,
     builder: &'a Builder<'ctx>,
     module: &'a Module<'ctx>,
+    opt_module: Option<Module<'ctx>>,
     vars: HashMap<i32, PointerValue<'ctx>>,
     strings: Rc<RefCell<HashMap<String, PointerValue<'ctx>>>>,
     mapstructs: HashMap<Type<'b>, StructType<'ctx>>,
@@ -50,6 +54,7 @@ pub fn compile<'ctx, 'a, 'b>(
     let mut c = Compiler {
         context,
         module,
+        opt_module: None,
         builder,
         vars: HashMap::new(),
         strings: Rc::new(RefCell::new(HashMap::new())),
@@ -409,7 +414,13 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             } else {
                 println!("LLVM-IR is valid")
             }
-
+            self.opt_module = Some(
+                self.context
+                    .create_module_from_ir(
+                        MemoryBuffer::create_from_file(Path::new("./out/program.opt.ll")).unwrap(),
+                    )
+                    .unwrap(),
+            );
             /*
             if let Err(e) = self.module.verify() {
                 println!("{}", e.to_string());
@@ -460,7 +471,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         }
         if self.ee.is_none() {
             self.ee = Some(
-                self.module
+                self.opt_module.as_ref().unwrap()
                     .create_jit_execution_engine(OptimizationLevel::Aggressive)
                     .unwrap(),
             );
@@ -656,7 +667,13 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     );
                     self.builder.position_at_end(*thenlable);
                     self.emit_block(block, fv);
-                    if thenlable.get_terminator().is_none() {
+                    if self
+                        .builder
+                        .get_insert_block()
+                        .unwrap()
+                        .get_terminator()
+                        .is_none()
+                    {
                         self.builder.build_unconditional_branch(afterelselable);
                     }
                     self.builder.position_at_end(*afterthenlable);
@@ -683,7 +700,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 );
                 self.builder.position_at_end(whilelable);
                 self.emit_block(block, fv);
-                if whilelable.get_terminator().is_none() {
+
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
                     self.builder.build_unconditional_branch(condlable);
                 }
                 self.builder.position_at_end(afterwhilelable)
@@ -693,6 +717,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     .emit_value(map, scopeinfo.clone(), fv)
                     .into_pointer_value();
                 if let Type::Map(k, v) = maptype {
+                    //self.emit_printf_call(&"FOR:\n", &[]);
                     let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
                     self.builder
                         .build_store(idx, self.context.i64_type().const_zero());
@@ -2489,7 +2514,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             let call_block = self.builder.get_insert_block().unwrap();
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
-
+            //self.emit_printf_call(&"INSERT KEY:%lu\n", &[fv.get_nth_param(KEY_PARAM).unwrap().into()]);
             /*
             insert(map, k, v) {
                 IF K NOT UNIT {
@@ -2539,7 +2564,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .unwrap();
             let tombs = self.builder.build_load(tombsptr, "tombs");
 
-            let capacity = self.builder.build_load(
+            let capacity_before_rehash = self.builder.build_load(
                 self.builder
                     .build_struct_gep(
                         fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
@@ -2565,7 +2590,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                             "",
                         ),
                         self.builder.build_int_mul(
-                            capacity.into_int_value(),
+                            capacity_before_rehash.into_int_value(),
                             self.context.i64_type().const_int(3, false),
                             "",
                         ),
@@ -2590,6 +2615,16 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             } else {
                 vec![]
             };
+            let capacity = self.builder.build_load(
+                self.builder
+                    .build_struct_gep(
+                        fv.get_nth_param(MAP_PARAM).unwrap().into_pointer_value(),
+                        MAP_CAPACITY,
+                        &(id.to_string() + ".capacity.ptr"),
+                    )
+                    .unwrap(),
+                "capacity",
+            );
             let hash = self
                 .builder
                 .build_call(self.hash(k, scopeinfo.clone()), &hashargs, "")
@@ -2597,6 +2632,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .unwrap_left();
 
             let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+
             self.builder.build_store(
                 idx,
                 self.builder.build_int_unsigned_rem(
@@ -3261,7 +3297,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 let call_block = self.builder.get_insert_block();
                 self.builder
                     .position_at_end(self.context.append_basic_block(fv, "entry"));
-
+                //self.emit_printf_call(&"REHASHING\n", &[]);
                 let map = fv.get_first_param().unwrap().into_pointer_value();
                 let oldcap = self
                     .builder
@@ -3434,7 +3470,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         "newiinc",
                     ),
                 );
-                self.builder.build_unconditional_branch(afterwhile);
+                self.builder.build_unconditional_branch(whilecond);
 
                 self.builder.position_at_end(afterwhile);
 
@@ -3468,6 +3504,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     unsafe { self.builder.build_gep(newstates, &[newival], "newstates_i") },
                     self.context.i64_type().const_int(STATE_TAKEN, false),
                 );
+                //self.emit_printf_call(&"KEY:%lu IDX:%lu -> IDX:%lu\n", &[key.into(), ival.into(), newival.into()]);
+
                 self.builder.build_unconditional_branch(afterif);
                 self.builder.position_at_end(afterif);
                 self.builder.build_unconditional_branch(forinc);
@@ -4757,6 +4795,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             let call_block = self.builder.get_insert_block().unwrap();
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
+
+            //self.emit_printf_call(&"GET_MAYBE \tKEY: %lu", &[fv.get_nth_param(1).unwrap().into()]);
             /*
             getMaybe(map, k) {
                 i = hash(k) % map.capacity
@@ -4861,6 +4901,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     )
                     .try_as_basic_value()
                     .unwrap_left();
+                //self.emit_printf_call(&" HASH: %lu\n", &[hash.into()]);
 
                 let capacity = self.builder.build_load(
                     self.builder
@@ -4895,9 +4936,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     "keys",
                 );
 
-                let idx = self.builder.build_alloca(self.context.i64_type(), "idx");
+                let idx_ptr = self.builder.build_alloca(self.context.i64_type(), "idx");
                 self.builder.build_store(
-                    idx,
+                    idx_ptr,
                     self.builder.build_int_unsigned_rem(
                         hash.into_int_value(),
                         capacity.into_int_value(),
@@ -4911,27 +4952,28 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
 
                 self.builder.build_unconditional_branch(whilecond);
                 self.builder.position_at_end(whilecond);
-
-                let state = unsafe {
-                    self.builder.build_gep(
-                        states.into_pointer_value(),
-                        &[self.builder.build_load(idx, "").into_int_value()],
-                        "",
-                    )
+                let idx_val = self.builder.build_load(idx_ptr, "idx_val").into_int_value();
+                let state_ptr = unsafe {
+                    self.builder
+                        .build_gep(states.into_pointer_value(), &[idx_val], "")
                 };
+                let state_val = self.builder.build_load(state_ptr, "");
 
-                let key = unsafe {
-                    self.builder.build_gep(
-                        keys.into_pointer_value(),
-                        &[self.builder.build_load(idx, "").into_int_value()],
-                        "",
-                    )
+                let key_ptr = unsafe {
+                    self.builder
+                        .build_gep(keys.into_pointer_value(), &[idx_val], "")
                 };
+                let key_val = self.builder.build_load(key_ptr, "");
+
+                //todo move key
+                //self.emit_printf_call(&"IDX: %lu, STATE: %lu, KEY: %lu \n", &[idx_val.into(), state_val.into() ,key_val.into()]);
 
                 self.builder.build_conditional_branch(
                     self.builder.build_int_compare(
                         IntPredicate::NE,
-                        self.builder.build_load(state, "state_idx").into_int_value(),
+                        self.builder
+                            .build_load(state_ptr, "state_idx")
+                            .into_int_value(),
                         self.context.i64_type().const_int(STATE_FREE, false),
                         "is_not_state_free",
                     ),
@@ -4943,12 +4985,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 //if
                 let ifbody = self.context.append_basic_block(fv, "ifbody");
                 let afterif = self.context.append_basic_block(fv, "afterif");
-                let keyidx = self.builder.build_load(key, "key_idx");
+                let keyidx = self.builder.build_load(key_ptr, "key_idx");
                 self.builder.build_conditional_branch(
                     self.builder.build_and(
                         self.builder.build_int_compare(
                             IntPredicate::EQ,
-                            self.builder.build_load(state, "state_idx").into_int_value(),
+                            self.builder
+                                .build_load(state_ptr, "state_idx")
+                                .into_int_value(),
                             self.context.i64_type().const_int(STATE_TAKEN, false),
                             "is_state_taken",
                         ),
@@ -4985,7 +5029,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                                         "values",
                                     )
                                     .into_pointer_value(),
-                                &[self.builder.build_load(idx, "").into_int_value()],
+                                &[self.builder.build_load(idx_ptr, "").into_int_value()],
                                 "",
                             )
                         },
@@ -5005,9 +5049,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 self.builder.position_at_end(afterif);
 
                 self.builder.build_store(
-                    idx,
+                    idx_ptr,
                     self.builder.build_int_add(
-                        self.builder.build_load(idx, "").into_int_value(),
+                        self.builder.build_load(idx_ptr, "").into_int_value(),
                         self.context.i64_type().const_int(1, false),
                         "",
                     ),
