@@ -14,7 +14,7 @@ mod tests {
         (0..t).map(|_| f()).sum::<f64>() / (t as f64)
     }
 
-    //#[test]
+    #[test]
     fn fill() -> Result<(), ()> {
         let fp = parser::FileParser::new("./benchmark/fill.mpl").unwrap();
         let mut ast = fp.parse().unwrap();
@@ -87,15 +87,15 @@ mod tests {
         ]);
         for p in 2..9 {
             let n = 10u64.pow(p);
-            let runs = 10;
+            let runs = 1;
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2}ms", average(runs, || { mplset(n) })),
-                format!("{:.2}ms", average(runs, || { mplmap(n) })),
+                //format!("{:.2}ms", average(runs, || { mplset(n) })),
+                //format!("{:.2}ms", average(runs, || { mplmap(n) })),
                 format!("{:.2}ms", average(runs, || { mplsetfloat(n) })),
-                format!("{:.2}ms", average(runs, || { rustset(n) })),
-                format!("{:.2}ms", average(runs, || { rustmap(n) }))
+                //format!("{:.2}ms", average(runs, || { rustset(n) })),
+                //format!("{:.2}ms", average(runs, || { rustmap(n) }))
             ]);
         }
         t.printstd();
@@ -104,7 +104,7 @@ mod tests {
         Ok(())
     }
 
-	#[test]
+	//#[test]
     fn lookup() -> Result<(), ()> {
 		let fp = parser::FileParser::new("./benchmark/lookup.mpl").unwrap();
         let mut ast = fp.parse().unwrap();
@@ -112,7 +112,7 @@ mod tests {
         let context = Context::create();
         let builder = &context.create_builder();
         let module = &context.create_module("module");
-		
+
         let compiler = compile::compile(&context, builder, module, ast);
 
         let map_fill_half = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashMapFillHalf");

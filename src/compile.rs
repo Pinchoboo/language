@@ -18,7 +18,7 @@ use inkwell::{
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{
         ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
-        FunctionValue, PointerValue,
+        FunctionValue, IntValue, PointerValue,
     },
     AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel,
 };
@@ -32,6 +32,7 @@ use crate::{
 const PRINTF: &str = "printf";
 const MEMSET: &str = "memset";
 const CALLOC: &str = "calloc";
+const MALLOC: &str = "malloc";
 
 pub struct Compiler<'ctx, 'a, 'b> {
     context: &'ctx Context,
@@ -205,6 +206,17 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .as_basic_type_enum(),
         }
     }
+    fn llvm_size_int(
+        &mut self,
+        t: &Type<'b>,
+        si: Rc<RefCell<ScopeInfo<'b>>>,
+    ) -> BasicTypeEnum<'ctx> {
+        match t {
+            Type::Float => self.context.i64_type().as_basic_type_enum(),
+            _ => self.llvmtype(t, si),
+        }
+    }
+
     fn llvmconstarray(
         &mut self,
         t: &Type<'b>,
@@ -316,6 +328,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                         ],
                         false,
                     ),
+                Some(Linkage::External),
+            );
+            self.module.add_function(
+                MALLOC,
+                self.context
+                    .i8_type()
+                    .ptr_type(AddressSpace::default())
+                    .fn_type(&[self.context.i64_type().into()], false),
                 Some(Linkage::External),
             );
             self.module.add_function(
@@ -458,6 +478,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 .arg("./out/program")
                 .arg("-g")
                 .arg("-O3")
+				.arg("-fsanitize=address")
                 .output()
                 .unwrap()
                 .stderr;
@@ -471,7 +492,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
         }
         if self.ee.is_none() {
             self.ee = Some(
-                self.opt_module.as_ref().unwrap()
+                self.opt_module
+                    .as_ref()
+                    .unwrap()
                     .create_jit_execution_engine(OptimizationLevel::Aggressive)
                     .unwrap(),
             );
@@ -481,7 +504,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
     pub fn execute(&self) -> i32 {
         unsafe { self.get_function::<unsafe extern "C" fn() -> i32>("main")() }
     }
-
+    fn debug(&self, s: &str, args: impl AsRef<[BasicMetadataValueEnum<'ctx>]>) {
+        if cfg!(feature = "debugmpl") {
+            self.emit_printf_call(&s, args.as_ref());
+        }
+    }
     fn emit_printf_call(
         &self,
         string: &&str,
@@ -2514,7 +2541,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
             let call_block = self.builder.get_insert_block().unwrap();
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
-            //self.emit_printf_call(&"INSERT KEY:%lu\n", &[fv.get_nth_param(KEY_PARAM).unwrap().into()]);
+            if Type::Float.eq(k){
+				self.debug("INSERT KEY:%f\n", [fv.get_nth_param(KEY_PARAM).unwrap().into()]);
+			}else{
+				self.debug("INSERT KEY:%lu\n", [fv.get_nth_param(KEY_PARAM).unwrap().into()]);
+			}
             /*
             insert(map, k, v) {
                 IF K NOT UNIT {
@@ -3343,12 +3374,29 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                     "",
                 );
 
-                //self.emit_printf_call(&"REHASHING %d\n", &[newcap.into()]);
-
+                self.debug(
+                    "REHASHING with capacity %lu -> %lu\n",
+                    [oldcap.into(), newcap.into()],
+                );
+                self.debug("\tmalloc(%lu) \n", [self
+				.builder
+				.build_int_mul(llvmk.size_of().unwrap(), newcap, "")
+				.into()]);
                 let newkeys = self
                     .builder
-                    .build_array_malloc(llvmk, newcap, "newkeys")
+                    .build_array_malloc(
+                        self.llvm_size_int(&k, scopeinfo.clone()),
+                        newcap,
+                        "newkeys",
+                    )
                     .unwrap();
+                let newkeys = self
+                    .builder
+                    .build_bitcast(newkeys, llvmk.ptr_type(AddressSpace::default()), "")
+                    .into_pointer_value();
+
+                self.debug("\tkeys alocated\n", []);
+
                 let newvalues = if Type::Unit.ne(v) {
                     Some(
                         self.builder
@@ -3358,12 +3406,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a, 'b> {
                 } else {
                     None
                 };
+                self.debug("\tvalues alocated\n", []);
                 let newstates = self.emit_calloc(
                     self.context.i64_type(),
                     self.builder
                         .build_int_cast(newcap, self.context.i32_type(), "")
                         .into(),
                 );
+                self.debug("\tstates alocated\n", []);
 
                 let iptr = self.builder.build_alloca(self.context.i64_type(), "iptr");
                 let newiptr = self

@@ -1,4 +1,8 @@
-fn main(){}
+fn main(){
+	[float->void] s = hashSetFloatFill(1000)
+	printInt(s.size())
+	free s
+}
 
 fn [int->void] hashSetFill(int size) {
 	new [int->void] set
@@ -37,3 +41,11 @@ fn [int->int] hashMapFill(int size) {
 fn dropHashMap([int->int] map){
 	free map
 }
+
+fn printString(perfect [int -> char] s) {
+	int i = 0
+	while i < s.size() {
+		printChar(s.get(i))
+		i = i + 1
+	}
+} 

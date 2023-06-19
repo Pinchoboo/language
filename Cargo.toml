@@ -11,6 +11,9 @@ opt-level = 3
 [env]
 RUST_TEST_THREADS = "1"
 
+[features]
+debugmpl = []
+
 [dependencies]
 derivative = "2.2.0"
 pest = "2.6.0"
