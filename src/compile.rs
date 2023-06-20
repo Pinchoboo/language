@@ -230,10 +230,10 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     .map(|v| v.into_int_value())
                     .collect::<Vec<_>>(),
             ),
-            Type::Float => self.context.f64_type().const_array(
+            Type::Float => self.context.i64_type().const_array(
                 &values
                     .iter()
-                    .map(|v| v.into_float_value())
+                    .map(|v| self.builder.build_bitcast(*v, self.context.i64_type(), "").into_int_value())
                     .collect::<Vec<_>>(),
             ),
             Type::Bool => self.context.bool_type().const_array(

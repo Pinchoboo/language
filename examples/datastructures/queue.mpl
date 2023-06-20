@@ -8,7 +8,6 @@
 	VALUE -> int	
 ]
 
-
 fn queueInsert([Queue] q, int value) {
 	new [Node] nHead
 	nHead.insert(VALUE, value)
@@ -24,7 +23,7 @@ fn queueInsert([Queue] q, int value) {
 
 fn int queueTake([Queue] q) {
 	[Node] t = q.get(TAIL)
-	int r = t.get(VALUE)
+	int r = t.get(NEXT)
 	[void -> [Node]] maybePrev = t.getMaybe(NEXT)
 	if maybePrev.size() == 1 {
 		[Node] prev = maybePrev.get()

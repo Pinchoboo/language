@@ -22,7 +22,8 @@ mod tests {
 		queue()?;
 		stack()?;
 		tree()?;
-		graph()
+		graph()?;
+		heap()
 	}
 	
 	fn fill() -> Result<(), ()> {
@@ -198,6 +199,9 @@ mod tests {
         Ok(())
     }
 	fn graph() -> Result<(), ()> {
+        Ok(())
+    }
+	fn heap() -> Result<(), ()> {
         Ok(())
     }
 }
