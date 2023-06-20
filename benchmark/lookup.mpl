@@ -1,5 +1,5 @@
 fn int main(){
-	int size = 1000000
+	int size = 100
 	[int->int] m = hashMapFillHalf(size)
 	printInt(hashMapLookup(m, size))
 	dropHashMap(m)

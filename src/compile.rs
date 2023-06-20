@@ -2,7 +2,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     iter::once_with,
-    mem,
     path::Path,
     process::{exit, Command},
     rc::Rc,
@@ -10,22 +9,22 @@ use std::{
 
 use inkwell::{
     builder::Builder,
-    context::{self, Context},
-    execution_engine::{ExecutionEngine, JitFunction, UnsafeFunctionPointer},
+    context::{Context},
+    execution_engine::{ExecutionEngine, UnsafeFunctionPointer},
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
-    targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple},
+    targets::{InitializationConfig, Target, TargetTriple},
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{
         ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
-        FunctionValue, IntValue, PointerValue,
+        FunctionValue, PointerValue,
     },
-    AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel,
+    AddressSpace, IntPredicate, OptimizationLevel,
 };
 
 use crate::{
     functions::{self},
-    parser::{BinOp, Block, Expression, PerfectMap, Program, Statement, Type, Value},
+    parser::{BinOp, Block, Expression, Program, Statement, Type, Value},
     perfect,
     typecheck::{self, find_structmaptype, find_variable, ScopeInfo},
 };
@@ -534,7 +533,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
     }
 
     pub fn get_function<F: UnsafeFunctionPointer>(&self, fname: &str) -> F {
-        if let Some(ee) = &self.ee {
+        if let Some(_ee) = &self.ee {
             let maybe_fn = unsafe { self.ee.as_ref().unwrap().get_function::<F>(fname) };
             return match maybe_fn {
                 Ok(f) => unsafe { f.as_raw() },
@@ -2525,7 +2524,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
         maptype: &Type<'b>,
         scopeinfo: Rc<RefCell<ScopeInfo<'b>>>,
     ) -> FunctionValue {
-        let fname = if !matches!(maptype, Type::Map(k, v) if Type::Float.eq(k) || Type::Int.eq(k) )
+        let fname = if !matches!(maptype, Type::Map(k, _v) if Type::Float.eq(k) || Type::Int.eq(k) )
         {
             format!("{}_insert", &maptype)
         } else {
@@ -2562,7 +2561,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
             let call_block = self.builder.get_insert_block().unwrap();
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
-            if Type::Float.eq(k) {
+            /*
+			if Type::Float.eq(k) {
                 self.debug(
                     "INSERT KEY:%f\n",
                     [fv.get_nth_param(KEY_PARAM).unwrap().into()],
@@ -2573,6 +2573,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     [fv.get_nth_param(KEY_PARAM).unwrap().into()],
                 );
             }
+			 */
             /*
             insert(map, k, v) {
                 IF K NOT UNIT {
@@ -3309,7 +3310,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
     ) -> FunctionValue<'ctx> {
         /*
         fn rehash(map) {
-            newcapacity = map.size * 2 + 16
+            newcapacity = map.size * 3 + 16
             newkeys = malloc newcapacity
             IF V != VOID{
                 newvalues = malloc newcapacity
@@ -3363,7 +3364,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 let call_block = self.builder.get_insert_block();
                 self.builder
                     .position_at_end(self.context.append_basic_block(fv, "entry"));
-                //self.emit_printf_call(&"REHASHING\n", &[]);
                 let map = fv.get_first_param().unwrap().into_pointer_value();
                 let oldcap = self
                     .builder
@@ -3402,7 +3402,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 "",
                             )
                             .into_int_value(),
-                        self.context.i64_type().const_int(2, false),
+                        self.context.i64_type().const_int(3, false),
                         "",
                     ),
                     self.context.i64_type().const_int(16, false),
@@ -3423,7 +3423,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 let newkeys = self
                     .builder
                     .build_array_malloc(
-                        self.llvm_size_int(&k, scopeinfo.clone()),
+                        llvmk,
                         newcap,
                         "newkeys",
                     )
@@ -3592,7 +3592,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     unsafe { self.builder.build_gep(newstates, &[newival], "newstates_i") },
                     self.context.i64_type().const_int(STATE_TAKEN, false),
                 );
-                //self.emit_printf_call(&"KEY:%lu IDX:%lu -> IDX:%lu\n", &[key.into(), ival.into(), newival.into()]);
+                //self.debug("\tKEY:%lu IDX:%lu -> IDX:%lu\n", [key.into(), ival.into(), newival.into()]);
 
                 self.builder.build_unconditional_branch(afterif);
                 self.builder.position_at_end(afterif);
@@ -4582,11 +4582,16 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
 
                 self.builder.build_store(
                     idx,
-                    self.builder.build_int_add(
-                        self.builder.build_load(idx, "").into_int_value(),
-                        self.context.i64_type().const_int(1, false),
-                        "",
-                    ),
+					self.builder.build_int_unsigned_rem(
+						self.builder.build_int_add(
+							self.builder.build_load(idx, "").into_int_value(),
+							self.context.i64_type().const_int(1, false),
+							"",
+						),
+						capacity.into_int_value(),
+						"",
+					)
+                    ,
                 );
                 self.builder.build_unconditional_branch(whilecond);
 
@@ -4875,7 +4880,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
 
-            //self.emit_printf_call(&"GET_MAYBE \tKEY: %lu", &[fv.get_nth_param(1).unwrap().into()]);
+            //self.debug("GET_MAYBE \tKEY: %lu\n", [fv.get_nth_param(1).unwrap().into()]);
             /*
             getMaybe(map, k) {
                 i = hash(k) % map.capacity
@@ -5031,21 +5036,18 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
 
                 self.builder.build_unconditional_branch(whilecond);
                 self.builder.position_at_end(whilecond);
+
                 let idx_val = self.builder.build_load(idx_ptr, "idx_val").into_int_value();
-                let state_ptr = unsafe {
+                //self.debug("\tIDX: %lu\n", [idx_val.into()]);
+				let state_ptr = unsafe {
                     self.builder
                         .build_gep(states.into_pointer_value(), &[idx_val], "")
                 };
-                let state_val = self.builder.build_load(state_ptr, "");
 
                 let key_ptr = unsafe {
                     self.builder
                         .build_gep(keys.into_pointer_value(), &[idx_val], "")
                 };
-                let key_val = self.builder.build_load(key_ptr, "");
-
-                //todo move key
-                //self.emit_printf_call(&"IDX: %lu, STATE: %lu, KEY: %lu \n", &[idx_val.into(), state_val.into() ,key_val.into()]);
 
                 self.builder.build_conditional_branch(
                     self.builder.build_int_compare(
@@ -5129,11 +5131,16 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
 
                 self.builder.build_store(
                     idx_ptr,
-                    self.builder.build_int_add(
-                        self.builder.build_load(idx_ptr, "").into_int_value(),
-                        self.context.i64_type().const_int(1, false),
-                        "",
-                    ),
+					self.builder.build_int_unsigned_rem(
+						self.builder.build_int_add(
+							self.builder.build_load(idx_ptr, "").into_int_value(),
+							self.context.i64_type().const_int(1, false),
+							"",
+						),
+						capacity.into_int_value(),
+						"",
+					)
+                    ,
                 );
                 self.builder.build_unconditional_branch(whilecond);
 

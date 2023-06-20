@@ -4,7 +4,6 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
-    process::exit,
     rc::Rc,
 };
 

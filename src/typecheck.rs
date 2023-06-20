@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    fmt::Display,
     rc::Rc,
 };
 
@@ -91,9 +90,9 @@ pub fn typecheck(ast: &mut Program) {
     };
 
     //check for single main function
-    /*if !ast.functions.iter().any(|f| f.identifier.eq("main")) {
+    if !ast.functions.iter().any(|f| f.identifier.eq("main")) {
         panic!("could not find a top level main function")
-    }*/
+    }
 
     //check for duplicate functions
     let mut functions = HashSet::new();
@@ -551,7 +550,7 @@ impl<'a> TypeCheckContext<'a> {
         );
 
         if let Type::PerfectMap(k, v) = &fm.maptype {
-            let id = fm.identifier;
+            let _id = fm.identifier;
             let mut set: HashSet<ConstValue> = HashSet::new();
             let mut assoc = Vec::new();
             for e in &mut fm.entries {
@@ -572,7 +571,7 @@ impl<'a> TypeCheckContext<'a> {
         match t {
             Type::Unit => todo!(),
             Type::Map(_, _) => todo!(),
-            Type::PerfectMap(key, val) => match v {
+            Type::PerfectMap(_key, _val) => match v {
                 Value::Int(_) => todo!(),
                 Value::Float(_) => todo!(),
                 Value::Bool(_) => todo!(),

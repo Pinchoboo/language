@@ -1,27 +1,31 @@
 
 #[cfg(test)]
 mod tests {
-    /*global_asm!(include_str!("../benchmark/link/fill.asm"));
-	extern "C" {
-		fn hashSetFill(size: u64) -> u64;
-		fn hashSetFloatFill(size: u64) -> u64;
-	}*/
     use std::{
         collections::{HashMap, HashSet},
         fs::File,
-        time::Instant, arch::global_asm,
+        time::Instant
     };
 
-    use inkwell::context::Context;
+    use inkwell::{context::Context};
     use prettytable::{row, table};
 
     use crate::{check, compile, parser};
     fn average(t: u64, f: impl Fn() -> f64) -> f64 {
         (0..t).map(|_| f()).sum::<f64>() / (t as f64)
     }
-
+	
     #[test]
-    fn fill() -> Result<(), ()> {
+    fn benchmark() -> Result<(),()> {
+		fill()?;
+		lookup()?;
+		queue()?;
+		stack()?;
+		tree()?;
+		graph()
+	}
+	
+	fn fill() -> Result<(), ()> {
         let fp = parser::FileParser::new("./benchmark/fill.mpl").unwrap();
         let mut ast = fp.parse().unwrap();
         check(&mut ast);
@@ -62,6 +66,16 @@ mod tests {
             map_free(set);
             time
         };
+		let rustvec = |size| {
+            let now = Instant::now();
+            let mut m: Vec<u64> = Vec::with_capacity(0);
+            for i in 0..size {
+                m.push(std::hint::black_box(i));
+            }
+            let time = now.elapsed().as_micros() as f64 * 0.001;
+            drop(m);
+            time
+        };
 
         let rustset = |size| {
             let now = Instant::now();
@@ -83,25 +97,27 @@ mod tests {
             drop(m);
             time
         };
-        let mut t = table!([H5c->"Fill Benchmark"],[
+        let mut t = table!([H7c->"Fill Benchmark"],[
             "Keys",
             "MPL set",
             "MPL map",
             "MPL set float",
+			"Rust vec",
             "Rust set",
             "Rust map"
         ]);
-        for p in 2..5 {
+        for p in 2..9 {
             let n = 10u64.pow(p);
             let runs = 1;
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
                 format!("{:.2}ms", average(runs, || { mplset(n) })),
-                //format!("{:.2}ms", average(runs, || { mplmap(n) })),
-                //format!("{:.2}ms", average(runs, || { mplsetfloat(n) })),
-                //format!("{:.2}ms", average(runs, || { rustset(n) })),
-                //format!("{:.2}ms", average(runs, || { rustmap(n) }))
+                format!("{:.2}ms", average(runs, || { mplmap(n) })),
+                format!("{:.2}ms", average(runs, || { mplsetfloat(n) })),
+				format!("{:.2}ms", average(runs, || { rustvec(n) })),
+                format!("{:.2}ms", average(runs, || { rustset(n) })),
+                format!("{:.2}ms", average(runs, || { rustmap(n) }))
             ]);
         }
         t.printstd();
@@ -110,7 +126,6 @@ mod tests {
         Ok(())
     }
 
-    //#[test]
     fn lookup() -> Result<(), ()> {
         let fp = parser::FileParser::new("./benchmark/lookup.mpl").unwrap();
         let mut ast = fp.parse().unwrap();
@@ -130,7 +145,7 @@ mod tests {
         let mplmap = |size| unsafe {
             let map = map_fill_half(size);
             let now = Instant::now();
-            std::hint::black_box(map_lookup(map, size));
+            map_lookup(map, size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
             drop_map(map);
             time
@@ -138,7 +153,7 @@ mod tests {
         let rustmap = |size| {
             let mut map: HashMap<u64, u64> = HashMap::new();
             for i in (0..size).step_by(2) {
-                map.insert(i, i);
+                std::hint::black_box(map.insert(i, i));
             }
             let now = Instant::now();
             let mut r = 0;
@@ -147,7 +162,7 @@ mod tests {
                     r += std::hint::black_box(*v);
                 }
             }
-            _ = std::hint::black_box(r);
+            std::hint::black_box(r);
             let time = now.elapsed().as_micros() as f64 * 0.001;
             drop(map);
             time
@@ -157,9 +172,9 @@ mod tests {
             "MPL map",
             "RUST map",
         ]);
-        for p in 2..6 {
+        for p in 2..8 {
             let n = 10u64.pow(p);
-            let runs = 1; //4u64.pow(8 - p);
+            let runs = 4; //4u64.pow(8 - p);
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
@@ -170,6 +185,19 @@ mod tests {
         t.printstd();
         let mut f = File::create("./benchmark/lookup.txt").unwrap();
         _ = t.print(&mut f);
+        Ok(())
+    }
+
+	fn queue() -> Result<(), ()> {
+        Ok(())
+    }
+    fn stack() -> Result<(), ()> {
+        Ok(())
+    }
+	fn tree() -> Result<(), ()> {
+        Ok(())
+    }
+	fn graph() -> Result<(), ()> {
         Ok(())
     }
 }

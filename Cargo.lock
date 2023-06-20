@@ -163,7 +163,6 @@ dependencies = [
 name = "fp"
 version = "0.1.0"
 dependencies = [
- "cc",
  "derivative",
  "inkwell",
  "once_cell",

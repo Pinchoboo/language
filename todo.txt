@@ -21,3 +21,7 @@ const <int,char> = "test"
 Type LETTER = A | B | C
 ---
 palindrome number
+
+needs
+llvm12 install
+clang and llvm-opt-12 in path

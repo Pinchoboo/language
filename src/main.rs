@@ -1,9 +1,9 @@
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
-use std::{borrow::Cow, process::exit};
+use std::{process::exit};
 
-use inkwell::context::{self, Context};
+use inkwell::context::{Context};
 use parser::Program;
 
 extern crate pest;
