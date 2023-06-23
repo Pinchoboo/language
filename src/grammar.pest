@@ -120,7 +120,7 @@ if       =  { ifKeyword ~ expression ~ scope ~ (elseKeyword ~ ifKeyword ~ expres
 while    =  { whileKeyword ~ expression ~ scope }
 function =  { functionKeyword ~ type? ~ identifier ~ "(" ~ (type ~ identifier ~ ("," ~ type ~ identifier)*)? ~ ")" ~ scope }
 for = {forKeyWord ~ identifier ~ "->" ~ identifier ~ inKeyWord ~ value ~ scope }
-return = { (returnKeyword ~ expression) }
+return = { (returnKeyword ~ expression?) }
 free = { (freeKeyword ~ identifier) }
 /// no nested functions and nested scopes for now
 block = {

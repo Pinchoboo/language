@@ -16,7 +16,7 @@ use pest::{
     Parser, Span,
 };
 
-use crate::typecheck::{ScopeInfo, ConstValue};
+use crate::typecheck::{ConstValue, ScopeInfo};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -65,9 +65,9 @@ pub struct PerfectMap<'a> {
     pub identifier: Identifier<'a>,
     pub entries: Vec<(Value<'a>, Value<'a>)>,
     pub customindexing: Option<(Identifier<'a>, Vec<Expression<'a>>)>,
-	pub values: Vec<(ConstValue, ConstValue)>,
-	pub args: Vec<u32>,
-	pub nid: i32
+    pub values: Vec<(ConstValue, ConstValue)>,
+    pub args: Vec<u32>,
+    pub nid: i32,
 }
 
 #[derive(Derivative, PartialEq, Eq)]
@@ -205,7 +205,7 @@ pub enum StatementType<'a> {
         Option<i32>,
     ),
     Call(Identifier<'a>, Vec<Expression<'a>>, Option<i32>),
-    Return(Expression<'a>),
+    Return(Option<Expression<'a>>),
     Creation(Type<'a>, Identifier<'a>, Option<i32>),
     Free(Identifier<'a>, Option<i32>),
     MapCall(
@@ -539,13 +539,12 @@ impl<'a> FileParser {
                                     None,
                                 )
                             }
-                            Rule::r#return => StatementType::Return(
-                                self.parse_expression(
-                                    sp.into_inner()
-                                        .next()
-                                        .expect("assignment should have a variable"),
-                                ),
-                            ),
+                            Rule::r#return => {
+                                let n = sp.into_inner().next();
+                                StatementType::Return(
+                                    n.map(|e| self.parse_expression(e))
+                                )
+                            }
                             Rule::creation => {
                                 let mut inner = sp.into_inner();
                                 StatementType::Creation(
@@ -690,22 +689,22 @@ impl<'a> FileParser {
     fn parse_find_map(&'a self, p: Pair<'a, Rule>) -> PerfectMap<'a> {
         let mut inner = p.clone().into_inner();
         inner.next();
-		
+
         PerfectMap {
             maptype: self.parse_map(inner.next().unwrap()),
             identifier: inner.next().unwrap().as_str(),
             entries: self.parse_entries(&mut inner),
-            customindexing: {self.parse_custom_indexing(&mut inner)},
-			values : Vec::with_capacity(0),
-			args : Vec::with_capacity(0),
-			nid : 0
+            customindexing: { self.parse_custom_indexing(&mut inner) },
+            values: Vec::with_capacity(0),
+            args: Vec::with_capacity(0),
+            nid: 0,
         }
     }
 
     fn parse_entries(&'a self, p: &mut Pairs<'a, Rule>) -> Vec<(Value<'a>, Value<'a>)> {
         let mut ret = Vec::new();
         while p.peek().is_some() && p.peek().unwrap().as_rule() == Rule::keyValuePair {
-			let mut i = p.next().unwrap().into_inner();
+            let mut i = p.next().unwrap().into_inner();
             ret.push((
                 self.parse_value(i.next().unwrap()),
                 self.parse_value(i.next().unwrap()),
@@ -722,10 +721,14 @@ impl<'a> FileParser {
         )
     }
 
-	fn parse_custom_indexing(&'a self, p: &mut Pairs<'a, Rule>) -> Option<(Identifier<'a>, Vec<Expression<'a>>)> {
+    fn parse_custom_indexing(
+        &'a self,
+        p: &mut Pairs<'a, Rule>,
+    ) -> Option<(Identifier<'a>, Vec<Expression<'a>>)> {
         p.next();
-		Some((
-			p.next()?.as_str(), p.into_iter().map(|i|self.parse_expression(i)).collect()
-		))
+        Some((
+            p.next()?.as_str(),
+            p.into_iter().map(|i| self.parse_expression(i)).collect(),
+        ))
     }
 }

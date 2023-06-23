@@ -23,7 +23,7 @@ fn queueInsert([Queue] q, int value) {
 
 fn int queueTake([Queue] q) {
 	[Node] t = q.get(TAIL)
-	int r = t.get(NEXT)
+	int r = t.get(VALUE)
 	[void -> [Node]] maybePrev = t.getMaybe(NEXT)
 	if maybePrev.size() == 1 {
 		[Node] prev = maybePrev.get()

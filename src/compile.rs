@@ -9,7 +9,7 @@ use std::{
 
 use inkwell::{
     builder::Builder,
-    context::{Context},
+    context::Context,
     execution_engine::{ExecutionEngine, UnsafeFunctionPointer},
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
@@ -96,7 +96,6 @@ pub const STATE_TOMB: u64 = 2;
 const ROT: &str = "llvm.fshr.i64";
 
 impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
-
     fn llvmstruct(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> StructType<'ctx> {
         match t {
             Type::Map(k, v) => {
@@ -169,7 +168,9 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 let struct_name = format!("{t}_{n}");
                 let size = self.context.i64_type();
 
-                if let std::collections::hash_map::Entry::Vacant(e) = self.mapstructs.entry(format!("{t}")) {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    self.mapstructs.entry(format!("{t}"))
+                {
                     let st = self.context.opaque_struct_type(&struct_name);
                     e.insert(st);
                     let mut fieldtypes = vec![
@@ -233,7 +234,11 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
             Type::Float => self.context.i64_type().const_array(
                 &values
                     .iter()
-                    .map(|v| self.builder.build_bitcast(*v, self.context.i64_type(), "").into_int_value())
+                    .map(|v| {
+                        self.builder
+                            .build_bitcast(*v, self.context.i64_type(), "")
+                            .into_int_value()
+                    })
                     .collect::<Vec<_>>(),
             ),
             Type::Bool => self.context.bool_type().const_array(
@@ -700,7 +705,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     .unwrap()
                     .set_name("elseblock");
                 self.emit_block(elseblock, fv);
-                self.builder.build_unconditional_branch(afterelselable);
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    self.builder.build_unconditional_branch(afterelselable);
+                }
                 self.builder.position_at_end(afterelselable);
             }
             crate::parser::StatementType::While((cond, block)) => {
@@ -1001,7 +1014,10 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
             crate::parser::StatementType::Call(id, args, Some(i)) => {
                 self.emit_call(id, args, i, scopeinfo, fv);
             }
-            crate::parser::StatementType::Return(e) => {
+            crate::parser::StatementType::Return(None) => {
+                self.builder.build_return(None);
+            }
+            crate::parser::StatementType::Return(Some(e)) => {
                 self.builder
                     .build_return(Some(&self.emit_expression(e, scopeinfo, fv, false)));
             }
@@ -1195,6 +1211,20 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         self.builder
                             .build_int_mul(lv.into_int_value(), rv.into_int_value(), ""),
                     ),
+                    (Type::Int, BinOp::Divide, Type::Int) => {
+                        BasicValueEnum::IntValue(self.builder.build_int_signed_div(
+                            lv.into_int_value(),
+                            rv.into_int_value(),
+                            "",
+                        ))
+                    }
+                    (Type::Int, BinOp::Modulo, Type::Int) => {
+                        BasicValueEnum::IntValue(self.builder.build_int_unsigned_rem(
+                            lv.into_int_value(),
+                            rv.into_int_value(),
+                            "",
+                        ))
+                    }
 
                     (Type::Float, BinOp::Add, Type::Float) => self.builder.build_bitcast(
                         self.builder.build_float_add(
@@ -1276,8 +1306,19 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                             "",
                         ))
                     }
+                    (Type::Int, BinOp::NotEqual, Type::Int) => {
+                        BasicValueEnum::IntValue(self.builder.build_int_compare(
+                            inkwell::IntPredicate::NE,
+                            lv.into_int_value(),
+                            rv.into_int_value(),
+                            "",
+                        ))
+                    }
                     _ => {
-                        panic!("should be exhaustive")
+                        panic!(
+                            "should be exhaustive, missing{:?}",
+                            (l.get_type(), b, r.get_type())
+                        )
                     }
                 }
             }
@@ -1472,7 +1513,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
             .collect();
         if *i == -1 {
             match *id {
-                functions::PRINT_INT => self.emit_printf_call(&"%lu", &args),
+                functions::PRINT_INT => self.emit_printf_call(&"%ld", &args),
                 functions::PRINT_BOOL => self.emit_printf_call(&{ "%d" }, &args),
                 functions::PRINT_LN => self.emit_printf_call(&{ "\n" }, &args),
                 functions::PRINT_CHAR => self.emit_printf_call(&{ "%c" }, &args),
@@ -2530,7 +2571,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
         } else {
             match maptype {
                 Type::Map(_, v) => format!("{}_insert", &Type::Map(Box::new(Type::Int), v.clone())),
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         };
         if let Some(fv) = self.module.get_function(&fname) {
@@ -2562,7 +2603,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
             self.builder
                 .position_at_end(self.context.append_basic_block(fv, "entry"));
             /*
-			if Type::Float.eq(k) {
+            if Type::Float.eq(k) {
                 self.debug(
                     "INSERT KEY:%f\n",
                     [fv.get_nth_param(KEY_PARAM).unwrap().into()],
@@ -2573,7 +2614,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     [fv.get_nth_param(KEY_PARAM).unwrap().into()],
                 );
             }
-			 */
+             */
             /*
             insert(map, k, v) {
                 IF K NOT UNIT {
@@ -2775,16 +2816,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 self.builder.position_at_end(whilebody);
                 self.builder.build_store(
                     idx,
-					self.builder.build_int_unsigned_rem(
-						self.builder.build_int_add(
-							self.builder.build_load(idx, "").into_int_value(),
-							self.context.i64_type().const_int(1, false),
-							"",
-						),
-						capacity.into_int_value(),
-						"",
-					)
-                    ,
+                    self.builder.build_int_unsigned_rem(
+                        self.builder.build_int_add(
+                            self.builder.build_load(idx, "").into_int_value(),
+                            self.context.i64_type().const_int(1, false),
+                            "",
+                        ),
+                        capacity.into_int_value(),
+                        "",
+                    ),
                 );
                 self.builder.build_unconditional_branch(whilecond);
 
@@ -3422,11 +3462,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 );
                 let newkeys = self
                     .builder
-                    .build_array_malloc(
-                        llvmk,
-                        newcap,
-                        "newkeys",
-                    )
+                    .build_array_malloc(llvmk, newcap, "newkeys")
                     .unwrap();
                 let newkeys = self
                     .builder
@@ -4582,16 +4618,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
 
                 self.builder.build_store(
                     idx,
-					self.builder.build_int_unsigned_rem(
-						self.builder.build_int_add(
-							self.builder.build_load(idx, "").into_int_value(),
-							self.context.i64_type().const_int(1, false),
-							"",
-						),
-						capacity.into_int_value(),
-						"",
-					)
-                    ,
+                    self.builder.build_int_unsigned_rem(
+                        self.builder.build_int_add(
+                            self.builder.build_load(idx, "").into_int_value(),
+                            self.context.i64_type().const_int(1, false),
+                            "",
+                        ),
+                        capacity.into_int_value(),
+                        "",
+                    ),
                 );
                 self.builder.build_unconditional_branch(whilecond);
 
@@ -5039,7 +5074,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
 
                 let idx_val = self.builder.build_load(idx_ptr, "idx_val").into_int_value();
                 //self.debug("\tIDX: %lu\n", [idx_val.into()]);
-				let state_ptr = unsafe {
+                let state_ptr = unsafe {
                     self.builder
                         .build_gep(states.into_pointer_value(), &[idx_val], "")
                 };
@@ -5131,16 +5166,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
 
                 self.builder.build_store(
                     idx_ptr,
-					self.builder.build_int_unsigned_rem(
-						self.builder.build_int_add(
-							self.builder.build_load(idx_ptr, "").into_int_value(),
-							self.context.i64_type().const_int(1, false),
-							"",
-						),
-						capacity.into_int_value(),
-						"",
-					)
-                    ,
+                    self.builder.build_int_unsigned_rem(
+                        self.builder.build_int_add(
+                            self.builder.build_load(idx_ptr, "").into_int_value(),
+                            self.context.i64_type().const_int(1, false),
+                            "",
+                        ),
+                        capacity.into_int_value(),
+                        "",
+                    ),
                 );
                 self.builder.build_unconditional_branch(whilecond);
 

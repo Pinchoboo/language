@@ -327,10 +327,15 @@ impl<'a> TypeCheckContext<'a> {
                         panic!("could not find map {id}")
                     }
                 }
-                crate::parser::StatementType::Return(expr) => {
+				crate::parser::StatementType::Return(None) => {
+                    if !matches!(returntype, Some(Type::Unit))  {
+						panic!("does not return correct type:{returntype:?}")
+                    }
+                }
+                crate::parser::StatementType::Return(Some(expr)) => {
                     if let Some(rt) = returntype {
                         if self.check_expression(expr, block.scopeinfo.clone(), None) != *rt {
-                            panic!("does not return correct type")
+                            panic!("does not return correct type {returntype:?} in {:?}", &s)
                         }
                         hasreturned = true;
                     } else {

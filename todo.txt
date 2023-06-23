@@ -25,3 +25,6 @@ palindrome number
 needs
 llvm12 install
 clang and llvm-opt-12 in path
+
+try cargo clean if the compiler does not compile
+cargo run -- pathtofile
