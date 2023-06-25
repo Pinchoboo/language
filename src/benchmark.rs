@@ -1,19 +1,22 @@
-
-
 #[cfg(test)]
 mod tests {
+    use crate::{check, compile, parser};
     use inkwell::context::Context;
+    use once_cell::sync::Lazy;
     use prettytable::{row, table};
     use std::{
         collections::{HashMap, HashSet, LinkedList, VecDeque},
+        fmt::Display,
         fs::File,
         mem::{swap, take},
+        num::Wrapping,
         ops::Deref,
-        time::Instant, fmt::Display, process::id, num::Wrapping,
+        process::id,
+        time::Instant, borrow::BorrowMut,
     };
+    use sysinfo::{System, SystemExt};
 
-    use crate::{check, compile, parser};
-    fn average(t: u64, f: impl Fn() -> f64) -> f64 {
+    fn average(t: u64, mut f: impl FnMut() -> f64) -> f64 {
         (0..t).map(|_| f()).sum::<f64>() / (t as f64)
     }
     fn average2(t: u64, f: impl Fn() -> (f64, f64)) -> (f64, f64) {
@@ -27,13 +30,14 @@ mod tests {
 
     #[test]
     fn benchmark() -> Result<(), ()> {
-        //fill()?;
-        //lookup()?;
-        //pushpop()?;
+        fill()?;
+        panic!();
+        lookup()?;
+        pushpop()?;
         tree()?;
         //graph()?;
         //heap()?;
-		Err(())
+        Ok(())
     }
 
     fn fill() -> Result<(), ()> {
@@ -47,11 +51,16 @@ mod tests {
 
         let set_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFill");
         let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
+        let mut s = System::new();
 
-        let mplset = |size| unsafe {
+        let mut mplset = |size| unsafe {
+            s.refresh_memory();
+            let used = s.used_memory();
             let now = Instant::now();
             let set = set_fill(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            s.refresh_memory();
+            println!("mplset {}:{}", size, s.used_memory() - used);
             drop_set(set);
             time
         };
@@ -117,7 +126,7 @@ mod tests {
             "Rust set",
             "Rust map"
         ]);
-        for p in 2..9 {
+        for p in 2..8 {
             let n = 10u64.pow(p);
             let runs = 1;
             t.add_row(row![
@@ -232,6 +241,18 @@ mod tests {
             (time, now.elapsed().as_micros() as f64 * 0.001)
         };
 
+        let pushvec = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("queueInsertN");
+        let popvec = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("queueTakeN");
+
+        let mplvec = |size| unsafe {
+            let now = Instant::now();
+            let vec = pushvec(size);
+            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let now = Instant::now();
+            popvec(vec, size);
+            (time, now.elapsed().as_micros() as f64 * 0.001)
+        };
+
         let rustslinkedlist = |size| {
             let now = Instant::now();
             let mut ll: LinkedList<u64> = LinkedList::new();
@@ -268,8 +289,8 @@ mod tests {
             "MPL pop (linked list FILO)",
             "MPL push (linked list FIFO)",
             "MPL pop (linked list FIFO)",
-            //"MPL push (Deque)", TODO
-            //"MPL pop (Deque)",
+            "MPL push (Vec)",
+            "MPL pop (Vec)",
             "Rust push (linked list)",
             "Rust pop (linked list)",
             "Rust push (VecDeque)",
@@ -280,6 +301,7 @@ mod tests {
             let runs = 1;
             let (mplpushstack, mplpopstack) = average2(runs, || mplstack(n));
             let (mplpushqueue, mplpopqueue) = average2(runs, || mplqueue(n));
+            let (mplpushvec, mplpopvec) = average2(runs, || mplvec(n));
             let (rustpushll, rustpopll) = average2(runs, || rustslinkedlist(n));
             let (rustpushvecdeque, rustpopvecdeque) = average2(runs, || rustvecdeque(n));
             t.add_row(row![
@@ -288,6 +310,8 @@ mod tests {
                 format!("{mplpopstack:.2}ms"),
                 format!("{mplpushqueue:.2}ms"),
                 format!("{mplpopqueue:.2}ms"),
+                format!("{mplpushvec:.2}ms"),
+                format!("{mplpopvec:.2}ms"),
                 format!("{rustpushll:.2}ms"),
                 format!("{rustpopll:.2}ms"),
                 format!("{rustpushvecdeque:.2}ms"),
@@ -327,27 +351,24 @@ mod tests {
 
         let rusttree = |size| {
             let mut now = Instant::now();
-			let mut tree = None;
-			let mut idx = 0;
-			let mut val: u64 = size/2;
-			while idx < size {
-				BinaryTree::insert(&mut tree, val % size);
-				idx+=1;
-				val = val.wrapping_mul(3).wrapping_add(idx);
-			}
+            let mut tree = None;
+            let mut idx = 0;
+            let mut val: u64 = size / 2;
+            while idx < size {
+                BinaryTree::insert(&mut tree, val % size);
+                idx += 1;
+                val = val.wrapping_mul(3).wrapping_add(idx);
+            }
             let time1 = now.elapsed().as_micros() as f64 * 0.001;
             now = Instant::now();
             BinaryTree::print(&tree, 0);
-			for i in 0..size {
-				println!("#{i}");
-				tree = BinaryTree::remove(tree, i);
-				BinaryTree::print(&tree, 0);
-			}
+            for i in 0..size {
+                tree = BinaryTree::remove(tree, i);
+            }
             let time2 = now.elapsed().as_micros() as f64 * 0.001;
             drop(tree);
             (time1, time2)
         };
-		rusttree(20);
 
         let mut t = table!([H5c->"BinaryTree Benchmark"],[
             "Keys",
@@ -356,18 +377,17 @@ mod tests {
             "Rust insert",
             "Rust remove",
         ]);
-        for p in 2..3 {
+        for p in 2..7 {
             let n = 10u64.pow(p);
             let runs = 1;
             let (pmltreeinsert, pmltreeremove) = average2(runs, || mpltree(n));
-			//let (rusttreeinsert, rusttreeremove) = average2(runs, || rusttree(n));
+            let (rusttreeinsert, rusttreeremove) = average2(runs, || rusttree(n));
             t.add_row(row![
                 format!("10^{p}"),
                 format!("{pmltreeinsert:.2}ms"),
                 format!("{pmltreeremove:.2}ms"),
-				//format!("{rusttreeinsert:.2}ms"),
-                //format!("{rusttreeremove:.2}ms"),
-                //format!("{:.2}ms", average(runs, || { rustmap(n) })),
+                format!("{rusttreeinsert:.2}ms"),
+                format!("{rusttreeremove:.2}ms"),
             ]);
         }
         t.printstd();
@@ -378,111 +398,14 @@ mod tests {
     }
 
     fn graph() -> Result<(), ()> {
-        let fp = parser::FileParser::new("./benchmark/fill.mpl").unwrap();
-        let mut ast = fp.parse().unwrap();
-        check(&mut ast);
-        let context = Context::create();
-        let builder = &context.create_builder();
-        let module = &context.create_module("module");
-        let compiler = compile::compile(&context, builder, module, ast);
-
-        let set_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
-
-        let mplset = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let set_fill =
-            compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFloatFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSetFloat");
-
-        let mplsetfloat = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let mut t = table!([H3c->"Lookup Benchmark 50% Hit"],[
-            "Keys",
-            "MPL map",
-            "RUST map",
-        ]);
-        for p in 2..8 {
-            let n = 10u64.pow(p);
-            let runs = 4;
-            t.add_row(row![
-                format!("10^{p}"),
-                //format!("{:.2}ms", average(runs, || { mplmap(n) })),
-                //format!("{:.2}ms", average(runs, || { rustmap(n) })),
-            ]);
-        }
-        t.printstd();
-        let mut f = File::create("./benchmark/lookup.txt").unwrap();
-        _ = t.print(&mut f);
-
-        Ok(())
+        todo!()
     }
 
     fn heap() -> Result<(), ()> {
-        let fp = parser::FileParser::new("./benchmark/fill.mpl").unwrap();
-        let mut ast = fp.parse().unwrap();
-        check(&mut ast);
-        let context = Context::create();
-        let builder = &context.create_builder();
-        let module = &context.create_module("module");
-        let compiler = compile::compile(&context, builder, module, ast);
-
-        let set_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
-
-        let mplset = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let set_fill =
-            compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFloatFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSetFloat");
-
-        let mplsetfloat = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let mut t = table!([H3c->"Lookup Benchmark 50% Hit"],[
-            "Keys",
-            "MPL map",
-            "RUST map",
-        ]);
-        for p in 2..8 {
-            let n = 10u64.pow(p);
-            let runs = 4;
-            t.add_row(row![
-                format!("10^{p}"),
-                //format!("{:.2}ms", average(runs, || { mplmap(n) })),
-                //format!("{:.2}ms", average(runs, || { rustmap(n) })),
-            ]);
-        }
-        t.printstd();
-        let mut f = File::create("./benchmark/lookup.txt").unwrap();
-        _ = t.print(&mut f);
-        Ok(())
+        todo!()
     }
 
-	#[derive(Debug)]
+    #[derive(Debug)]
     pub struct BinaryTree<T> {
         pub value: T,
         pub left: Option<Box<BinaryTree<T>>>,
@@ -498,11 +421,11 @@ mod tests {
             }
         }
 
-        pub fn insert(s: &mut Option<Box<Self>>, new_value: T) {
+        pub fn insert(s: &mut Option<Box<Self>>, insert_val: T) {
             match s {
                 None => {
                     *s = Some(Box::new(BinaryTree {
-                        value: new_value,
+                        value: insert_val,
                         left: None,
                         right: None,
                     }))
@@ -515,13 +438,13 @@ mod tests {
                             ref mut right,
                             ref mut value,
                         } = current.as_mut();
-                        if new_value <= *value {
+                        if *value > insert_val {
                             match left {
                                 Some(l) => {
                                     current = l;
                                 }
                                 None => {
-                                    *left = Some(Box::new(BinaryTree::new(new_value)));
+                                    *left = Some(Box::new(BinaryTree::new(insert_val)));
                                     return;
                                 }
                             }
@@ -531,7 +454,7 @@ mod tests {
                                     current = l;
                                 }
                                 None => {
-                                    *right = Some(Box::new(BinaryTree::new(new_value)));
+                                    *right = Some(Box::new(BinaryTree::new(insert_val)));
                                     return;
                                 }
                             }
@@ -552,45 +475,43 @@ mod tests {
                     } else if root.left.is_none() && root.right.is_none() {
                         return None;
                     } else if root.left.is_none() {
-						*root=take(&mut root.right).unwrap();
+                        *root = take(&mut root.right).unwrap();
                     } else if root.right.is_none() {
-						*root=take(&mut root.left).unwrap();
-                    }else{
-						let mut r = take(&mut root.right).unwrap();
-						let l = take(&mut root.left).unwrap();
-						if r.left.is_none(){
-							*root = r;
-						}else{
-							let parrent = {
-								let mut l = &mut r;
-								while l.left.as_ref().unwrap().left.is_some(){
-									l = l.left.as_mut().unwrap()
-								}
-								l
-							};
-							*root = take(&mut parrent.left).unwrap();
-							root.right = Some(r);
-							
-						}
-						root.left = Some(l);
-					}
+                        *root = take(&mut root.left).unwrap();
+                    } else {
+                        let mut r = take(&mut root.right).unwrap();
+                        let l = take(&mut root.left).unwrap();
+                        if r.left.is_none() {
+                            *root = r;
+                        } else {
+                            let parrent = {
+                                let mut l = &mut r;
+                                while l.left.as_ref().unwrap().left.is_some() {
+                                    l = l.left.as_mut().unwrap()
+                                }
+                                l
+                            };
+                            *root = take(&mut parrent.left).unwrap();
+                            root.right = Some(r);
+                        }
+                        root.left = Some(l);
+                    }
                 }
             }
             s
         }
-    
-		pub fn print(s: &Option<Box<Self>>, indent: i32) {
-			if s.is_none(){
-				return;
-			}
-			let s = s.as_ref().unwrap();
-			BinaryTree::print(&s.right, indent+1);
-			for i in 0..indent {
-				print!("\t")
-			}
-			println!("{}",s.value);
-			BinaryTree::print(&s.left, indent+1);
-		}
-	}
-	
+
+        pub fn print(s: &Option<Box<Self>>, indent: i32) {
+            if s.is_none() {
+                return;
+            }
+            let s = s.as_ref().unwrap();
+            BinaryTree::print(&s.right, indent + 1);
+            for i in 0..indent {
+                print!("\t")
+            }
+            println!("{}", s.value);
+            BinaryTree::print(&s.left, indent + 1);
+        }
+    }
 }

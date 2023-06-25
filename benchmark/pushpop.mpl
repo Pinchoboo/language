@@ -1,4 +1,7 @@
-fn main(){}
+fn main(){
+	[Vec] v = vecInsertN(11)
+	vecTakeN(v, 11)	
+}
 
 fn [void -> [Node]] stackInsertN(int s){
 	new [void -> [Node]] stack
@@ -38,6 +41,31 @@ fn queueTakeN([Queue] q, int s){
 	free q
 }
 
+fn [Vec] vecInsertN(int s){
+	new [Vec] v
+	new [int->int] d
+	v.insert(SIZE, 0)
+	v.insert(DATA, d)
+
+	int i = 0
+	while i < s {
+		vecInsert(v, i)
+		i = i + 1
+	} 
+	return v
+}
+
+fn vecTakeN([Vec] v, int s){
+	int i = 0
+	while i < s {
+		vecTake(v)
+		i = i + 1
+	}
+	[int->int] d = v.get(DATA)
+	free d
+	free v
+}
+
 
 [Node] = [
 	NEXT -> [Node]
@@ -64,6 +92,7 @@ fn int stackTake([void -> [Node]] head) {
 	}
 	int value = oldHeadNode.get(VALUE)
 	free oldHeadNode
+	free maybeNHeadNode
 	return value
 }
 
@@ -82,6 +111,7 @@ fn queueInsert([Queue] q, int value) {
 	}else{
 		q.insert(TAIL, nHead)
 	}
+	free maybeOldHead
 	q.insert(HEAD, nHead)
 }
 
@@ -95,6 +125,28 @@ fn int queueTake([Queue] q) {
 	}else{
 		q.remove(TAIL)
 	}
+	free maybePrev
 	free t
+	return r
+}
+
+[Vec] = [
+	SIZE -> int
+	DATA -> [int->int]
+]
+
+fn vecInsert([Vec] v, int value) {
+	[int->int] data = v.get(DATA)
+	int idx = v.get(SIZE)
+	data.insert(idx,value)
+	v.insert(SIZE, idx+1)
+}
+
+fn int vecTake([Vec] v) {
+	[int->int] data = v.get(DATA)
+	int idx = v.get(SIZE) - 1
+	v.insert(SIZE, idx)
+	int r = data.get(idx)
+	data.remove(idx)
 	return r
 }

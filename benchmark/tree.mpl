@@ -1,6 +1,7 @@
 fn main(){
-	[void->[BTree]] t = BTreeFill(220)
-	BTreeEmpty(t, 220)
+	[void->[BTree]] t = BTreeFill(20)
+	BTreeEmpty(t, 20)
+	BTreePrintInOrder(t)
 	BTreeFree(t)
 }
 
@@ -131,26 +132,28 @@ fn [void -> [BTree]] BTreeRemove([void -> [BTree]] mbt, int val) {
 			}
 			free bt
 		}else{
-			[BTree] succParent = bt /* 4 */
-			[BTree] succ = ptrr.get() /* 6 */
+			[BTree] succParent = bt /* 10 */
+			[BTree] succ = ptrr.get() /* 11 */
 			free ptrl
-			ptrl = succ.getMaybe(LEFT) /* 6L */
+			ptrl = succ.getMaybe(LEFT) /* 11l */
 			bool isroot = true
 			while ptrl.size() == 1 {
 				isroot = false
-				succParent = succ 
+				succParent = succ
 				succ = ptrl.get() 
 				free ptrl
 				ptrl = succ.getMaybe(LEFT) 
 			}
 			free ptrr 
-			ptrr = succ.getMaybe(RIGHT) /* 6R */
+			ptrr = succ.getMaybe(RIGHT) /* 15 */
 			if ptrr.size() == 1 {
 				if isroot {
 					succParent.insert(RIGHT,ptrr.get())
 				}else{
 					succParent.insert(LEFT,ptrr.get())
 				}
+				succParent.insert(VALUE,succ.get(VALUE))
+				free succ
 			}else{
 				bt.insert(VALUE, succ.get(VALUE))
 				if isroot {
