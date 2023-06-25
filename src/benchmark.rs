@@ -1,15 +1,18 @@
-
-
 #[cfg(test)]
 mod tests {
+	use std::io::Write;
     use inkwell::context::Context;
-    use prettytable::{row, table};
+    use prettytable::{row, table, Table};
     use std::{
         collections::{HashMap, HashSet, LinkedList, VecDeque},
-        fs::File,
+        fmt::Display,
+        fs::{File, OpenOptions},
         mem::{swap, take},
+        num::Wrapping,
         ops::Deref,
-        time::Instant, fmt::Display, process::id, num::Wrapping,
+        os::unix::prelude::FileExt,
+        process::id,
+        time::Instant,
     };
 
     use crate::{check, compile, parser};
@@ -25,15 +28,29 @@ mod tests {
         })
     }
 
+    fn table_to_latex_tabular_inner(t: Table) -> String {
+        let mut s = String::new();
+        for r in &t {
+            for (p, c) in r.iter().enumerate() {
+                if p != 0 {
+                    s.push('&')
+                }
+                s.push_str(c.get_content().as_str());
+            }
+            s.push_str("\\\\ \\hline\n");
+        }
+        s
+    }
+
     #[test]
     fn benchmark() -> Result<(), ()> {
-        //fill()?;
+        fill()?;
         //lookup()?;
         //pushpop()?;
-        tree()?;
+        //tree()?;
         //graph()?;
         //heap()?;
-		Err(())
+        Err(())
     }
 
     fn fill() -> Result<(), ()> {
@@ -134,6 +151,12 @@ mod tests {
         t.printstd();
         let mut f = File::create("./benchmark/fill.txt").unwrap();
         _ = t.print(&mut f);
+        f = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("./benchmark/fill.txt")
+            .unwrap();
+        _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
     }
 
@@ -196,6 +219,12 @@ mod tests {
         t.printstd();
         let mut f = File::create("./benchmark/lookup.txt").unwrap();
         _ = t.print(&mut f);
+		f = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("./benchmark/fill.txt")
+            .unwrap();
+        _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
     }
 
@@ -297,7 +326,12 @@ mod tests {
         t.printstd();
         let mut f = File::create("./benchmark/pushpop.txt").unwrap();
         _ = t.print(&mut f);
-
+		f = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("./benchmark/fill.txt")
+            .unwrap();
+        _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
     }
 
@@ -327,27 +361,27 @@ mod tests {
 
         let rusttree = |size| {
             let mut now = Instant::now();
-			let mut tree = None;
-			let mut idx = 0;
-			let mut val: u64 = size/2;
-			while idx < size {
-				BinaryTree::insert(&mut tree, val % size);
-				idx+=1;
-				val = val.wrapping_mul(3).wrapping_add(idx);
-			}
+            let mut tree = None;
+            let mut idx = 0;
+            let mut val: u64 = size / 2;
+            while idx < size {
+                BinaryTree::insert(&mut tree, val % size);
+                idx += 1;
+                val = val.wrapping_mul(3).wrapping_add(idx);
+            }
             let time1 = now.elapsed().as_micros() as f64 * 0.001;
             now = Instant::now();
             BinaryTree::print(&tree, 0);
-			for i in 0..size {
-				println!("#{i}");
-				tree = BinaryTree::remove(tree, i);
-				BinaryTree::print(&tree, 0);
-			}
+            for i in 0..size {
+                println!("#{i}");
+                tree = BinaryTree::remove(tree, i);
+                BinaryTree::print(&tree, 0);
+            }
             let time2 = now.elapsed().as_micros() as f64 * 0.001;
             drop(tree);
             (time1, time2)
         };
-		rusttree(20);
+        rusttree(20);
 
         let mut t = table!([H5c->"BinaryTree Benchmark"],[
             "Keys",
@@ -360,12 +394,12 @@ mod tests {
             let n = 10u64.pow(p);
             let runs = 1;
             let (pmltreeinsert, pmltreeremove) = average2(runs, || mpltree(n));
-			//let (rusttreeinsert, rusttreeremove) = average2(runs, || rusttree(n));
+            //let (rusttreeinsert, rusttreeremove) = average2(runs, || rusttree(n));
             t.add_row(row![
                 format!("10^{p}"),
                 format!("{pmltreeinsert:.2}ms"),
                 format!("{pmltreeremove:.2}ms"),
-				//format!("{rusttreeinsert:.2}ms"),
+                //format!("{rusttreeinsert:.2}ms"),
                 //format!("{rusttreeremove:.2}ms"),
                 //format!("{:.2}ms", average(runs, || { rustmap(n) })),
             ]);
@@ -373,116 +407,24 @@ mod tests {
         t.printstd();
         let mut f = File::create("./benchmark/tree.txt").unwrap();
         _ = t.print(&mut f);
-
+		f = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("./benchmark/fill.txt")
+            .unwrap();
+        _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
     }
 
     fn graph() -> Result<(), ()> {
-        let fp = parser::FileParser::new("./benchmark/fill.mpl").unwrap();
-        let mut ast = fp.parse().unwrap();
-        check(&mut ast);
-        let context = Context::create();
-        let builder = &context.create_builder();
-        let module = &context.create_module("module");
-        let compiler = compile::compile(&context, builder, module, ast);
-
-        let set_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
-
-        let mplset = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let set_fill =
-            compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFloatFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSetFloat");
-
-        let mplsetfloat = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let mut t = table!([H3c->"Lookup Benchmark 50% Hit"],[
-            "Keys",
-            "MPL map",
-            "RUST map",
-        ]);
-        for p in 2..8 {
-            let n = 10u64.pow(p);
-            let runs = 4;
-            t.add_row(row![
-                format!("10^{p}"),
-                //format!("{:.2}ms", average(runs, || { mplmap(n) })),
-                //format!("{:.2}ms", average(runs, || { rustmap(n) })),
-            ]);
-        }
-        t.printstd();
-        let mut f = File::create("./benchmark/lookup.txt").unwrap();
-        _ = t.print(&mut f);
-
         Ok(())
     }
 
     fn heap() -> Result<(), ()> {
-        let fp = parser::FileParser::new("./benchmark/fill.mpl").unwrap();
-        let mut ast = fp.parse().unwrap();
-        check(&mut ast);
-        let context = Context::create();
-        let builder = &context.create_builder();
-        let module = &context.create_module("module");
-        let compiler = compile::compile(&context, builder, module, ast);
-
-        let set_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
-
-        let mplset = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let set_fill =
-            compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFloatFill");
-        let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSetFloat");
-
-        let mplsetfloat = |size| unsafe {
-            let now = Instant::now();
-            let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
-            drop_set(set);
-            time
-        };
-
-        let mut t = table!([H3c->"Lookup Benchmark 50% Hit"],[
-            "Keys",
-            "MPL map",
-            "RUST map",
-        ]);
-        for p in 2..8 {
-            let n = 10u64.pow(p);
-            let runs = 4;
-            t.add_row(row![
-                format!("10^{p}"),
-                //format!("{:.2}ms", average(runs, || { mplmap(n) })),
-                //format!("{:.2}ms", average(runs, || { rustmap(n) })),
-            ]);
-        }
-        t.printstd();
-        let mut f = File::create("./benchmark/lookup.txt").unwrap();
-        _ = t.print(&mut f);
-        Ok(())
+		Ok(())
     }
 
-	#[derive(Debug)]
+    #[derive(Debug)]
     pub struct BinaryTree<T> {
         pub value: T,
         pub left: Option<Box<BinaryTree<T>>>,
@@ -552,45 +494,43 @@ mod tests {
                     } else if root.left.is_none() && root.right.is_none() {
                         return None;
                     } else if root.left.is_none() {
-						*root=take(&mut root.right).unwrap();
+                        *root = take(&mut root.right).unwrap();
                     } else if root.right.is_none() {
-						*root=take(&mut root.left).unwrap();
-                    }else{
-						let mut r = take(&mut root.right).unwrap();
-						let l = take(&mut root.left).unwrap();
-						if r.left.is_none(){
-							*root = r;
-						}else{
-							let parrent = {
-								let mut l = &mut r;
-								while l.left.as_ref().unwrap().left.is_some(){
-									l = l.left.as_mut().unwrap()
-								}
-								l
-							};
-							*root = take(&mut parrent.left).unwrap();
-							root.right = Some(r);
-							
-						}
-						root.left = Some(l);
-					}
+                        *root = take(&mut root.left).unwrap();
+                    } else {
+                        let mut r = take(&mut root.right).unwrap();
+                        let l = take(&mut root.left).unwrap();
+                        if r.left.is_none() {
+                            *root = r;
+                        } else {
+                            let parrent = {
+                                let mut l = &mut r;
+                                while l.left.as_ref().unwrap().left.is_some() {
+                                    l = l.left.as_mut().unwrap()
+                                }
+                                l
+                            };
+                            *root = take(&mut parrent.left).unwrap();
+                            root.right = Some(r);
+                        }
+                        root.left = Some(l);
+                    }
                 }
             }
             s
         }
-    
-		pub fn print(s: &Option<Box<Self>>, indent: i32) {
-			if s.is_none(){
-				return;
-			}
-			let s = s.as_ref().unwrap();
-			BinaryTree::print(&s.right, indent+1);
-			for i in 0..indent {
-				print!("\t")
-			}
-			println!("{}",s.value);
-			BinaryTree::print(&s.left, indent+1);
-		}
-	}
-	
+
+        pub fn print(s: &Option<Box<Self>>, indent: i32) {
+            if s.is_none() {
+                return;
+            }
+            let s = s.as_ref().unwrap();
+            BinaryTree::print(&s.right, indent + 1);
+            for i in 0..indent {
+                print!("\t")
+            }
+            println!("{}", s.value);
+            BinaryTree::print(&s.left, indent + 1);
+        }
+    }
 }
