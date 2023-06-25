@@ -24,6 +24,7 @@ fn int hashMapLookup([int->int] map, int size) {
 		if m.size() == 1 {
 			r = r + m.get()
 		}
+		free m
 		idx = idx + 1
 	}
 	return r

@@ -1,22 +1,20 @@
 #[cfg(test)]
 mod tests {
-	use std::io::Write;
+	use std::{io::Write, fs::OpenOptions, fmt::Display};
     use inkwell::context::Context;
     use prettytable::{row, table, Table};
     use std::{
         collections::{HashMap, HashSet, LinkedList, VecDeque},
-        fmt::Display,
-        fs::{File, OpenOptions},
-        mem::{swap, take},
-        num::Wrapping,
-        ops::Deref,
-        os::unix::prelude::FileExt,
-        process::id,
+        fs::File,
+        mem::take,
         time::Instant,
     };
-
     use crate::{check, compile, parser};
-    fn average(t: u64, f: impl Fn() -> f64) -> f64 {
+    use sysinfo::{System, SystemExt};
+
+	const RUNS:u64 = 4;
+
+    fn average(t: u64, mut f: impl FnMut() -> f64) -> f64 {
         (0..t).map(|_| f()).sum::<f64>() / (t as f64)
     }
     fn average2(t: u64, f: impl Fn() -> (f64, f64)) -> (f64, f64) {
@@ -50,7 +48,7 @@ mod tests {
         //tree()?;
         //graph()?;
         //heap()?;
-        Err(())
+        Ok(())
     }
 
     fn fill() -> Result<(), ()> {
@@ -136,16 +134,15 @@ mod tests {
         ]);
         for p in 2..9 {
             let n = 10u64.pow(p);
-            let runs = 1;
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2}ms", average(runs, || { mplset(n) })),
-                format!("{:.2}ms", average(runs, || { mplmap(n) })),
-                format!("{:.2}ms", average(runs, || { mplsetfloat(n) })),
-                format!("{:.2}ms", average(runs, || { rustvec(n) })),
-                format!("{:.2}ms", average(runs, || { rustset(n) })),
-                format!("{:.2}ms", average(runs, || { rustmap(n) }))
+                format!("{:.2}ms", average(RUNS, || { mplset(n) })),
+                format!("{:.2}ms", average(RUNS, || { mplmap(n) })),
+                format!("{:.2}ms", average(RUNS, || { mplsetfloat(n) })),
+                format!("{:.2}ms", average(RUNS, || { rustvec(n) })),
+                format!("{:.2}ms", average(RUNS, || { rustset(n) })),
+                format!("{:.2}ms", average(RUNS, || { rustmap(n) }))
             ]);
         }
         t.printstd();
@@ -208,12 +205,11 @@ mod tests {
         ]);
         for p in 2..8 {
             let n = 10u64.pow(p);
-            let runs = 4; //4u64.pow(8 - p);
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2}ms", average(runs, || { mplmap(n) })),
-                format!("{:.2}ms", average(runs, || { rustmap(n) })),
+                format!("{:.2}ms", average(RUNS, || { mplmap(n) })),
+                format!("{:.2}ms", average(RUNS, || { rustmap(n) })),
             ]);
         }
         t.printstd();
@@ -261,6 +257,18 @@ mod tests {
             (time, now.elapsed().as_micros() as f64 * 0.001)
         };
 
+        let pushvec = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("queueInsertN");
+        let popvec = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("queueTakeN");
+
+        let mplvec = |size| unsafe {
+            let now = Instant::now();
+            let vec = pushvec(size);
+            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let now = Instant::now();
+            popvec(vec, size);
+            (time, now.elapsed().as_micros() as f64 * 0.001)
+        };
+
         let rustslinkedlist = |size| {
             let now = Instant::now();
             let mut ll: LinkedList<u64> = LinkedList::new();
@@ -297,8 +305,8 @@ mod tests {
             "MPL pop (linked list FILO)",
             "MPL push (linked list FIFO)",
             "MPL pop (linked list FIFO)",
-            //"MPL push (Deque)", TODO
-            //"MPL pop (Deque)",
+            "MPL push (Vec)",
+            "MPL pop (Vec)",
             "Rust push (linked list)",
             "Rust pop (linked list)",
             "Rust push (VecDeque)",
@@ -306,17 +314,19 @@ mod tests {
         ]);
         for p in 2..8 {
             let n = 10u64.pow(p);
-            let runs = 1;
-            let (mplpushstack, mplpopstack) = average2(runs, || mplstack(n));
-            let (mplpushqueue, mplpopqueue) = average2(runs, || mplqueue(n));
-            let (rustpushll, rustpopll) = average2(runs, || rustslinkedlist(n));
-            let (rustpushvecdeque, rustpopvecdeque) = average2(runs, || rustvecdeque(n));
+            let (mplpushstack, mplpopstack) = average2(RUNS, || mplstack(n));
+            let (mplpushqueue, mplpopqueue) = average2(RUNS, || mplqueue(n));
+            let (mplpushvec, mplpopvec) = average2(RUNS, || mplvec(n));
+            let (rustpushll, rustpopll) = average2(RUNS, || rustslinkedlist(n));
+            let (rustpushvecdeque, rustpopvecdeque) = average2(RUNS, || rustvecdeque(n));
             t.add_row(row![
                 format!("10^{p}"),
                 format!("{mplpushstack:.2}ms"),
                 format!("{mplpopstack:.2}ms"),
                 format!("{mplpushqueue:.2}ms"),
                 format!("{mplpopqueue:.2}ms"),
+                format!("{mplpushvec:.2}ms"),
+                format!("{mplpopvec:.2}ms"),
                 format!("{rustpushll:.2}ms"),
                 format!("{rustpopll:.2}ms"),
                 format!("{rustpushvecdeque:.2}ms"),
@@ -373,15 +383,12 @@ mod tests {
             now = Instant::now();
             BinaryTree::print(&tree, 0);
             for i in 0..size {
-                println!("#{i}");
                 tree = BinaryTree::remove(tree, i);
-                BinaryTree::print(&tree, 0);
             }
             let time2 = now.elapsed().as_micros() as f64 * 0.001;
             drop(tree);
             (time1, time2)
         };
-        rusttree(20);
 
         let mut t = table!([H5c->"BinaryTree Benchmark"],[
             "Keys",
@@ -390,18 +397,16 @@ mod tests {
             "Rust insert",
             "Rust remove",
         ]);
-        for p in 2..3 {
+        for p in 2..7 {
             let n = 10u64.pow(p);
-            let runs = 1;
-            let (pmltreeinsert, pmltreeremove) = average2(runs, || mpltree(n));
-            //let (rusttreeinsert, rusttreeremove) = average2(runs, || rusttree(n));
+            let (pmltreeinsert, pmltreeremove) = average2(RUNS, || mpltree(n));
+            let (rusttreeinsert, rusttreeremove) = average2(RUNS, || rusttree(n));
             t.add_row(row![
                 format!("10^{p}"),
                 format!("{pmltreeinsert:.2}ms"),
                 format!("{pmltreeremove:.2}ms"),
-                //format!("{rusttreeinsert:.2}ms"),
-                //format!("{rusttreeremove:.2}ms"),
-                //format!("{:.2}ms", average(runs, || { rustmap(n) })),
+                format!("{rusttreeinsert:.2}ms"),
+                format!("{rusttreeremove:.2}ms"),
             ]);
         }
         t.printstd();
@@ -440,11 +445,11 @@ mod tests {
             }
         }
 
-        pub fn insert(s: &mut Option<Box<Self>>, new_value: T) {
+        pub fn insert(s: &mut Option<Box<Self>>, insert_val: T) {
             match s {
                 None => {
                     *s = Some(Box::new(BinaryTree {
-                        value: new_value,
+                        value: insert_val,
                         left: None,
                         right: None,
                     }))
@@ -457,13 +462,13 @@ mod tests {
                             ref mut right,
                             ref mut value,
                         } = current.as_mut();
-                        if new_value <= *value {
+                        if *value > insert_val {
                             match left {
                                 Some(l) => {
                                     current = l;
                                 }
                                 None => {
-                                    *left = Some(Box::new(BinaryTree::new(new_value)));
+                                    *left = Some(Box::new(BinaryTree::new(insert_val)));
                                     return;
                                 }
                             }
@@ -473,7 +478,7 @@ mod tests {
                                     current = l;
                                 }
                                 None => {
-                                    *right = Some(Box::new(BinaryTree::new(new_value)));
+                                    *right = Some(Box::new(BinaryTree::new(insert_val)));
                                     return;
                                 }
                             }
