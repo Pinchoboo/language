@@ -10,7 +10,6 @@ mod tests {
         time::Instant,
     };
     use crate::{check, compile, parser};
-    use sysinfo::{System, SystemExt};
 
 	const RUNS:u64 = 4;
 
@@ -299,18 +298,21 @@ mod tests {
             (time, now.elapsed().as_micros() as f64 * 0.001)
         };
 
-        let mut t = table!([H7c->"Stack Benchmark"],[
+        let mut tpush = table!([H6c->"Push Benchmark"],[
             "Size",
-            "MPL push (linked list FILO)",
-            "MPL pop (linked list FILO)",
-            "MPL push (linked list FIFO)",
-            "MPL pop (linked list FIFO)",
-            "MPL push (Vec)",
-            "MPL pop (Vec)",
-            "Rust push (linked list)",
-            "Rust pop (linked list)",
-            "Rust push (VecDeque)",
-            "Rust pop (VecDeque)",
+            "MPL linked list FILO",
+            "MPL linked list FIFO",
+            "MPL Vec",
+            "Rust linked list",
+            "Rust VecDeque",
+        ]);
+		let mut tpop = table!([H6c->"Pop Benchmark"],[
+            "Size",
+            "MPL linked list FILO",
+            "MPL linked list FIFO",
+            "MPL Vec",
+            "Rust linked list",
+            "Rust VecDeque",
         ]);
         for p in 2..8 {
             let n = 10u64.pow(p);
@@ -319,29 +321,41 @@ mod tests {
             let (mplpushvec, mplpopvec) = average2(RUNS, || mplvec(n));
             let (rustpushll, rustpopll) = average2(RUNS, || rustslinkedlist(n));
             let (rustpushvecdeque, rustpopvecdeque) = average2(RUNS, || rustvecdeque(n));
-            t.add_row(row![
+            tpush.add_row(row![
                 format!("10^{p}"),
                 format!("{mplpushstack:.2}ms"),
-                format!("{mplpopstack:.2}ms"),
                 format!("{mplpushqueue:.2}ms"),
-                format!("{mplpopqueue:.2}ms"),
                 format!("{mplpushvec:.2}ms"),
-                format!("{mplpopvec:.2}ms"),
                 format!("{rustpushll:.2}ms"),
-                format!("{rustpopll:.2}ms"),
                 format!("{rustpushvecdeque:.2}ms"),
+            ]);
+			tpop.add_row(row![
+                format!("10^{p}"),
+                format!("{mplpopstack:.2}ms"),
+                format!("{mplpopqueue:.2}ms"),
+                format!("{mplpopvec:.2}ms"),
+                format!("{rustpopll:.2}ms"),
                 format!("{rustpopvecdeque:.2}ms"),
             ]);
         }
-        t.printstd();
-        let mut f = File::create("./benchmark/pushpop.txt").unwrap();
-        _ = t.print(&mut f);
+        tpush.printstd();
+        let mut f = File::create("./benchmark/push.txt").unwrap();
+        _ = tpush.print(&mut f);
 		f = OpenOptions::new()
             .write(true)
             .append(true)
-            .open("./benchmark/pushpop.txt")
+            .open("./benchmark/push.txt")
             .unwrap();
-        _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
+        _ = writeln!(f, "{}", table_to_latex_tabular_inner(tpush));
+		tpop.printstd();
+        let mut f = File::create("./benchmark/pop.txt").unwrap();
+        _ = tpop.print(&mut f);
+		f = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("./benchmark/pop.txt")
+            .unwrap();
+        _ = writeln!(f, "{}", table_to_latex_tabular_inner(tpop));
         Ok(())
     }
 
@@ -392,8 +406,8 @@ mod tests {
 
         let mut t = table!([H5c->"BinaryTree Benchmark"],[
             "Keys",
-            "MPL Tree insert",
-            "MPL Tree remove",
+            "MPL insert",
+            "MPL remove",
             "Rust insert",
             "Rust remove",
         ]);
