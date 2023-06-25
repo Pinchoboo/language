@@ -95,7 +95,7 @@ mod tests {
             let now = Instant::now();
             let mut m: Vec<u64> = Vec::with_capacity(0);
             for i in 0..size {
-                m.push(std::hint::black_box(i));
+                m.push(std::hint::black_box(i*i));
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
             drop(m);
@@ -106,7 +106,7 @@ mod tests {
             let now = Instant::now();
             let mut m: HashSet<u64> = HashSet::new();
             for i in 0..size {
-                m.insert(i);
+                m.insert(i*7);
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
             drop(m);
@@ -116,7 +116,7 @@ mod tests {
             let now = Instant::now();
             let mut m: HashMap<u64, u64> = HashMap::new();
             for _ in 0..size {
-                m.insert(m.len() as u64, m.len() as u64);
+                m.insert((m.len()*7) as u64, m.len() as u64);
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
             drop(m);
@@ -200,7 +200,7 @@ mod tests {
         let mut t = table!([H3c->"Lookup Benchmark 50% Hit"],[
             "Keys",
             "MPL map",
-            "RUST map",
+            "Rust map",
         ]);
         for p in 2..8 {
             let n = 10u64.pow(p);
@@ -303,7 +303,7 @@ mod tests {
             "MPL linked list FILO",
             "MPL linked list FIFO",
             "MPL Vec",
-            "Rust linked list",
+            "Rust LinkedList",
             "Rust VecDeque",
         ]);
 		let mut tpop = table!([H6c->"Pop Benchmark"],[
@@ -311,7 +311,7 @@ mod tests {
             "MPL linked list FILO",
             "MPL linked list FIFO",
             "MPL Vec",
-            "Rust linked list",
+            "Rust LinkedList",
             "Rust VecDeque",
         ]);
         for p in 2..8 {

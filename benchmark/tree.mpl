@@ -195,13 +195,11 @@ fn _BTreePrintInOrder([void -> [BTree]] mbt, int indent) {
 }
 
 fn BTreeFree([void -> [BTree]] mbt) {
-	if mbt.size() == 0 {
-		free mbt
-		return
+	if mbt.size() == 1 {
+		[BTree] bt = mbt.get()
+		BTreeFree(bt.getMaybe(RIGHT))
+		BTreeFree(bt.getMaybe(LEFT))
+		free bt
 	}
-	[BTree] bt = mbt.get()
-	BTreeFree(bt.getMaybe(RIGHT))
-	BTreeFree(bt.getMaybe(LEFT))
-	free bt
 	free mbt
 }

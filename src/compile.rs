@@ -3588,10 +3588,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 self.builder.position_at_end(whilebody);
                 self.builder.build_store(
                     newiptr,
-                    self.builder.build_int_add(
-                        newival,
-                        self.context.i64_type().const_int(1, false),
-                        "newiinc",
+                    self.builder.build_int_unsigned_rem(
+                        self.builder.build_int_add(
+                            newival,
+                            self.context.i64_type().const_int(1, false),
+                            "newiinc",
+                        ),
+                        newcap,
+                        "",
                     ),
                 );
                 self.builder.build_unconditional_branch(whilecond);
