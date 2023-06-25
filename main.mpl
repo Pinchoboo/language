@@ -1,11 +1,7 @@
-find perfect [float -> int] test = [
-	1.0 -> 100
-	2.0 -> 0
-	3.0 -> 0
-	4.0 -> 0
-]
+/* check ./examples/all_features.mpl for explanations */
 
 fn main(){
-	printInt(test.get(1.1))
-	printLn()
+	for _ -> c in "Hello World!\n" {
+		printChar(c)
+	}
 }

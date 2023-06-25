@@ -663,6 +663,7 @@ impl<'a> FileParser {
                 )
             }
             Rule::string => Value::String(pair.into_inner().next().unwrap().as_str()),
+			Rule::expression => self.parse_value(pair.into_inner().next().unwrap()),
             _ => panic!("unreachable"),
         }
     }

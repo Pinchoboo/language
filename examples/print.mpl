@@ -11,7 +11,7 @@ fn main(){
 	/*
 	for loop does not always loop through key value pairs in order, it does for string literals 
 	*/
-	for _ -> c in "string" {
+	for _ -> c in "string\n" {
 		printChar(c)
 	}
 }

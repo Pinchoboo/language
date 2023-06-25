@@ -1517,7 +1517,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 functions::PRINT_BOOL => self.emit_printf_call(&{ "%d" }, &args),
                 functions::PRINT_LN => self.emit_printf_call(&{ "\n" }, &args),
                 functions::PRINT_CHAR => self.emit_printf_call(&{ "%c" }, &args),
-                functions::PRINT_FLOAT => self.emit_printf_call(&{ "%f" }, &args),
+                functions::PRINT_FLOAT => self.emit_printf_call(
+                    &{ "%f" },
+                    &args
+                        .iter()
+                        .map(|f| self.builder.build_bitcast(f.into_int_value(), self.context.f64_type(), "").into()).collect::<Vec<_>>(),
+                ),
                 _ => {
                     panic!("unknown function: {id}")
                 }
