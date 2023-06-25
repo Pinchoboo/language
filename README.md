@@ -5,11 +5,11 @@ Compiler and some example programs in MPL
 llvm12
 clang and llvm-opt-12 in path
 
-#Usage
+# Usage
 cargo run -- path/to/file.mpl
 
 to run the benchmarks run: cargo test
 
-#Troubleshooting
+# Troubleshooting
 1. cargo clean
 3. works on my machine
