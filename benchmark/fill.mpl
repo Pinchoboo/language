@@ -1,14 +1,14 @@
 fn int main(){
-	[float->void] sf = hashSetFloatFill(10000000)
-	printInt(sf.size())
-	free sf
+	[int->void] m = hashSetFill(100000000)
+	printInt(m.size())
+	free m
 	return 0
 }
 
 fn [int->void] hashSetFill(int size) {
 	new [int->void] set
 	while set.size() < size {
-		set.insert(set.size()*7)
+		set.insert(set.size()*set.size())
 	}
 	return set
 }
@@ -21,7 +21,7 @@ fn [float->void] hashSetFloatFill(int size) {
 	new [float->void] set
 	float f = 0.0
 	while set.size() < size {
-		set.insert(f*1.1)
+		set.insert(f*f)
 		f = f + 1.0
 	}
 	return set
@@ -34,7 +34,7 @@ fn dropHashSetFloat([float->void] set){
 fn [int->int] hashMapFill(int size) {
 	new [int->int] map
 	while map.size() < size {
-		map.insert(map.size()*3,map.size())
+		map.insert(map.size()*map.size(),map.size())
 	}
 	return map
 }
