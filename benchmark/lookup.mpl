@@ -10,7 +10,7 @@ fn [int->int] hashMapFillHalf(int size) {
 	new [int->int] map
 	int idx = 0
 	while idx < size {
-		map.insert(idx*2, idx)
+		map.insert(idx*7, idx)
 		idx = idx + 2
 	}
 	return map
@@ -20,7 +20,7 @@ fn int hashMapLookup([int->int] map, int size) {
 	int idx = 0
 	int r = 0
 	while idx < size {
-		[void -> int] m = map.getMaybe(idx*2)
+		[void -> int] m = map.getMaybe(idx*7)
 		if m.size() == 1 {
 			r = r + m.get()
 		}

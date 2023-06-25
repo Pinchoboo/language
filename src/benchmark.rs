@@ -183,12 +183,12 @@ mod tests {
         let rustmap = |size| {
             let mut map: HashMap<u64, u64> = HashMap::new();
             for i in (0..size).step_by(2) {
-                std::hint::black_box(map.insert(i, i));
+                std::hint::black_box(map.insert(i*7, i));
             }
             let now = Instant::now();
             let mut r = 0;
             for i in 0..size {
-                if let Some(v) = map.get(&i) {
+                if let Some(v) = map.get(&(i*7)) {
                     r += std::hint::black_box(*v);
                 }
             }
@@ -256,8 +256,8 @@ mod tests {
             (time, now.elapsed().as_micros() as f64 * 0.001)
         };
 
-        let pushvec = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("queueInsertN");
-        let popvec = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("queueTakeN");
+        let pushvec = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN");
+        let popvec = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("vecTakeN");
 
         let mplvec = |size| unsafe {
             let now = Instant::now();
@@ -265,6 +265,18 @@ mod tests {
             let time = now.elapsed().as_micros() as f64 * 0.001;
             let now = Instant::now();
             popvec(vec, size);
+            (time, now.elapsed().as_micros() as f64 * 0.001)
+        };
+
+		let pushvec2 = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN2");
+        let popvec2 = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("vecTakeN2");
+
+        let mplvec2 = |size| unsafe {
+            let now = Instant::now();
+            let vec = pushvec2(size);
+            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let now = Instant::now();
+            popvec2(vec, size);
             (time, now.elapsed().as_micros() as f64 * 0.001)
         };
 
@@ -302,7 +314,8 @@ mod tests {
             "Size",
             "MPL linked list FILO",
             "MPL linked list FIFO",
-            "MPL Vec",
+            "MPL map",
+			//"MPL map 2",
             "Rust LinkedList",
             "Rust VecDeque",
         ]);
@@ -310,7 +323,8 @@ mod tests {
             "Size",
             "MPL linked list FILO",
             "MPL linked list FIFO",
-            "MPL Vec",
+            "MPL map",
+			//"MPL map 2",
             "Rust LinkedList",
             "Rust VecDeque",
         ]);
@@ -318,14 +332,16 @@ mod tests {
             let n = 10u64.pow(p);
             let (mplpushstack, mplpopstack) = average2(RUNS, || mplstack(n));
             let (mplpushqueue, mplpopqueue) = average2(RUNS, || mplqueue(n));
-            let (mplpushvec, mplpopvec) = average2(RUNS, || mplvec(n));
+            //let (mplpushvec, mplpopvec) = average2(RUNS, || mplvec(n));
+			let (mplpushvec2, mplpopvec2) = average2(RUNS, || mplvec2(n));
             let (rustpushll, rustpopll) = average2(RUNS, || rustslinkedlist(n));
             let (rustpushvecdeque, rustpopvecdeque) = average2(RUNS, || rustvecdeque(n));
             tpush.add_row(row![
                 format!("10^{p}"),
                 format!("{mplpushstack:.2}ms"),
                 format!("{mplpushqueue:.2}ms"),
-                format!("{mplpushvec:.2}ms"),
+                //format!("{mplpushvec:.2}ms"),
+				format!("{mplpushvec2:.2}ms"),
                 format!("{rustpushll:.2}ms"),
                 format!("{rustpushvecdeque:.2}ms"),
             ]);
@@ -333,7 +349,8 @@ mod tests {
                 format!("10^{p}"),
                 format!("{mplpopstack:.2}ms"),
                 format!("{mplpopqueue:.2}ms"),
-                format!("{mplpopvec:.2}ms"),
+                //format!("{mplpopvec:.2}ms"),
+				format!("{mplpopvec2:.2}ms"),
                 format!("{rustpopll:.2}ms"),
                 format!("{rustpopvecdeque:.2}ms"),
             ]);

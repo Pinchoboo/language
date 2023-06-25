@@ -66,6 +66,24 @@ fn vecTakeN([Vec] v, int s){
 	free v
 }
 
+fn [int->int] vecInsertN2(int s){
+	new [int->int] v
+	int i = 0
+	while i < s {
+		vecInsert2(v, i)
+		i = i + 1
+	} 
+	return v
+}
+
+fn vecTakeN2([int->int] v, int s){
+	int i = 0
+	while i < s {
+		vecTake2(v)
+		i = i + 1
+	}
+	free v
+}
 
 [Node] = [
 	NEXT -> [Node]
@@ -147,6 +165,17 @@ fn int vecTake([Vec] v) {
 	int idx = v.get(SIZE) - 1
 	v.insert(SIZE, idx)
 	int r = data.get(idx)
-	data.remove(idx)
+	/* data.remove(idx) not necessary can be overwritten on next push instead*/ 
+	return r
+}
+
+fn vecInsert2([int -> int] v, int value) {
+	v.insert(v.size(),value)
+}
+
+fn int vecTake2([int -> int] v) {
+	int idx = v.size() - 1
+	int r = v.get(idx)
+	v.remove(idx)
 	return r
 }
