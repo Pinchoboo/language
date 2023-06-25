@@ -43,9 +43,9 @@ mod tests {
     #[test]
     fn benchmark() -> Result<(), ()> {
         fill()?;
-        //lookup()?;
-        //pushpop()?;
-        //tree()?;
+        lookup()?;
+        pushpop()?;
+        tree()?;
         //graph()?;
         //heap()?;
         Ok(())
@@ -218,7 +218,7 @@ mod tests {
 		f = OpenOptions::new()
             .write(true)
             .append(true)
-            .open("./benchmark/fill.txt")
+            .open("./benchmark/lookup.txt")
             .unwrap();
         _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
@@ -339,7 +339,7 @@ mod tests {
 		f = OpenOptions::new()
             .write(true)
             .append(true)
-            .open("./benchmark/fill.txt")
+            .open("./benchmark/pushpop.txt")
             .unwrap();
         _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
@@ -415,7 +415,7 @@ mod tests {
 		f = OpenOptions::new()
             .write(true)
             .append(true)
-            .open("./benchmark/fill.txt")
+            .open("./benchmark/tree.txt")
             .unwrap();
         _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
