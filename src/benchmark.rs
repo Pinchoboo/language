@@ -20,7 +20,7 @@ mod tests {
         }
         #[cfg(not(feature = "heapsize"))]
         {
-            4
+            8
         }
     };
 
