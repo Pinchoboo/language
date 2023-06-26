@@ -1,9 +1,10 @@
 fn main(){
-	[void->[BTree]] t = BTreeFill(20)
-	BTreeEmpty(t, 20)
-	BTreePrintInOrder(t)
-	BTreeFree(t)
+	new [void->[BTree]] tree 
+	BTreeInsert(tree, 100)
+	BTreeInsert(tree, 200)
+	BTreeFree(tree)
 }
+
 
 fn [void->[BTree]] BTreeFill(int s){
 	new [void->[BTree]] tree 
@@ -46,6 +47,7 @@ fn BTreeInsert([void -> [BTree]] bt, int val) {
 			[void->[BTree]] next = current.getMaybe(LEFT)
 			if next.size() == 0 {
 				current.insert(LEFT,leaf)
+				free next
 				return
 			}
 			current = next.get()
@@ -54,6 +56,7 @@ fn BTreeInsert([void -> [BTree]] bt, int val) {
 			[void->[BTree]] next = current.getMaybe(RIGHT)
 			if next.size() == 0 {
 				current.insert(RIGHT,leaf)
+				free next
 				return
 			}
 			current = next.get()

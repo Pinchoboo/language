@@ -12,7 +12,9 @@ clang and llvm-opt-12 in path
 # Usage
 cargo run -- path/to/file.mpl
 
-to run the benchmarks run: cargo test
+to run the benchmarks run: 
+1. cargo test
+2. cargo test --features heapsize
 
 # Troubleshooting
 1. cargo clean

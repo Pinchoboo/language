@@ -11,20 +11,18 @@ mod tests {
         mem::take,
         time::Instant,
     };
-    use std::{
-        fmt::Display,
-        fs::OpenOptions,
-        io::Write,
-        ops::{AddAssign},
-    };
+    use std::{fmt::Display, fs::OpenOptions, io::Write, ops::AddAssign};
 
     const RUNS: u32 = {
-		#[cfg(feature = "heapsize")]
-		{1}
-		#[cfg(not(feature = "heapsize"))]
-		{4}
-	};
-	
+        #[cfg(feature = "heapsize")]
+        {
+            1
+        }
+        #[cfg(not(feature = "heapsize"))]
+        {
+            4
+        }
+    };
 
     fn average(t: u32, mut f: impl FnMut() -> f64) -> f64 {
         (0..t).map(|_| f()).sum::<f64>() / (t as f64)
@@ -37,6 +35,19 @@ mod tests {
             let f = f();
             acc.0 += f.0;
             acc.1 += f.1;
+            acc
+        })
+    }
+
+    fn sum3<A: AddAssign<A> + Default, B: AddAssign<B> + Default, C: AddAssign<C> + Default>(
+        t: u32,
+        f: impl Fn() -> (A, B, C),
+    ) -> (A, B, C) {
+        (0..t).fold((A::default(), B::default(), C::default()), |mut acc, _| {
+            let f = f();
+            acc.0 += f.0;
+            acc.1 += f.1;
+            acc.2 += f.2;
             acc
         })
     }
@@ -80,7 +91,6 @@ mod tests {
         let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
 
         let mplset = |size| unsafe {
-			println!("{size} test");
             let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
@@ -125,7 +135,7 @@ mod tests {
                 m.push(std::hint::black_box(i * i));
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
-			let space = m.get_size() as u64;
+            let space = m.get_size() as u64;
             drop(m);
             (time, space)
         };
@@ -137,7 +147,7 @@ mod tests {
                 m.insert(i * 7);
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
-			let space = m.get_size() as u64;
+            let space = m.get_size() as u64;
             drop(m);
             (time, space)
         };
@@ -148,12 +158,12 @@ mod tests {
                 m.insert((m.len() * 7) as u64, m.len() as u64);
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
-			let space = m.get_size() as u64;
+            let space = m.get_size() as u64;
             drop(m);
             (time, space)
         };
         let mut t = if cfg!(feature = "heapsize") {
-			table!([H7c->"Benchmark Space"],[
+            table!([H7c->"Benchmark Space"],[
                 "Keys",
                 "MPL set",
                 "MPL map",
@@ -178,11 +188,11 @@ mod tests {
             let (mplsettime, mplsetspace) = sum2(RUNS, || mplset(n));
             let (mplsetfloattime, mplsetfloatspace) = sum2(RUNS, || mplsetfloat(n));
             let (mplmaptime, mplmapspace) = sum2(RUNS, || mplmap(n));
-			let (rustvectime, rustvecspace) = sum2(RUNS, || rustvec(n));
-			let (rustsettime, rustsetspace) = sum2(RUNS, || rustset(n));
-			let (rustmaptime, rustmapspace) = sum2(RUNS, || rustmap(n));
+            let (rustvectime, rustvecspace) = sum2(RUNS, || rustvec(n));
+            let (rustsettime, rustsetspace) = sum2(RUNS, || rustset(n));
+            let (rustmaptime, rustmapspace) = sum2(RUNS, || rustmap(n));
             #[cfg(not(feature = "heapsize"))]
-			t.add_row(row![
+            t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
                 format!("{:.2}ms", mplsettime / RUNS as f64),
@@ -192,22 +202,25 @@ mod tests {
                 format!("{:.2}ms", rustsettime / RUNS as f64),
                 format!("{:.2}ms", rustmaptime / RUNS as f64)
             ]);
-			#[cfg(feature = "heapsize")]
-			t.add_row(row![
+            #[cfg(feature = "heapsize")]
+            t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
                 format!("{:.2} b/key", mplsetspace as f64 / n as f64 / RUNS as f64),
                 format!("{:.2} b/key", mplmapspace as f64 / n as f64 / RUNS as f64),
-                format!("{:.2} b/key", mplsetfloatspace as f64 / n as f64 / RUNS as f64),
+                format!(
+                    "{:.2} b/key",
+                    mplsetfloatspace as f64 / n as f64 / RUNS as f64
+                ),
                 format!("{:.2} b/key", rustvecspace as f64 / n as f64 / RUNS as f64),
                 format!("{:.2} b/key", rustsetspace as f64 / n as f64 / RUNS as f64),
                 format!("{:.2} b/key", rustmapspace as f64 / n as f64 / RUNS as f64)
             ]);
         }
-		#[cfg(feature = "heapsize")]
-		let path = "./benchmark/fill_space.txt";
-		#[cfg(not(feature = "heapsize"))]
-		let path = "./benchmark/fill.txt";
+        #[cfg(feature = "heapsize")]
+        let path = "./benchmark/fill_space.txt";
+        #[cfg(not(feature = "heapsize"))]
+        let path = "./benchmark/fill.txt";
         t.printstd();
         let mut f = File::create(path).unwrap();
         _ = t.print(&mut f);
@@ -221,8 +234,8 @@ mod tests {
     }
 
     fn lookup() -> Result<(), ()> {
-		#[cfg(feature = "heapsize")]
-		return Ok(());
+        #[cfg(feature = "heapsize")]
+        return Ok(());
         let fp = parser::FileParser::new("./benchmark/lookup.mpl").unwrap();
         let mut ast = fp.parse().unwrap();
         check(&mut ast);
@@ -298,52 +311,82 @@ mod tests {
         let module = &context.create_module("module");
         let compiler = compile::compile(&context, builder, module, ast);
 
+        let heap_size = compiler.get_function::<unsafe extern "C" fn() -> u64>("heapSize");
+
         let pushstack = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("stackInsertN");
         let popstack = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("stackTakeN");
 
         let mplstack = |size| unsafe {
+            let space1 = heap_size();
             let now = Instant::now();
             let stack = pushstack(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            let space2 = heap_size();
             let now = Instant::now();
             popstack(stack, size);
-            (time, now.elapsed().as_micros() as f64 * 0.001)
+            assert_eq!(heap_size(), space1);
+            (
+                time,
+                now.elapsed().as_micros() as f64 * 0.001,
+                space2 - space1,
+            )
         };
 
         let pushqueue = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("queueInsertN");
         let popqueue = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("queueTakeN");
 
         let mplqueue = |size| unsafe {
+            let space1 = heap_size();
             let now = Instant::now();
             let queue = pushqueue(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            let space2 = heap_size();
             let now = Instant::now();
             popqueue(queue, size);
-            (time, now.elapsed().as_micros() as f64 * 0.001)
+            assert_eq!(heap_size(), space1);
+            (
+                time,
+                now.elapsed().as_micros() as f64 * 0.001,
+                space2 - space1,
+            )
         };
 
         let pushvec = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN");
         let popvec = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("vecTakeN");
 
         let mplvec = |size| unsafe {
+            let space1 = heap_size();
             let now = Instant::now();
             let vec = pushvec(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            let space2 = heap_size();
             let now = Instant::now();
             popvec(vec, size);
-            (time, now.elapsed().as_micros() as f64 * 0.001)
+            assert_eq!(heap_size(), space1);
+            (
+                time,
+                now.elapsed().as_micros() as f64 * 0.001,
+                space2 - space1,
+            )
         };
 
         let pushvec2 = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN2");
         let popvec2 = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("vecTakeN2");
 
         let mplvec2 = |size| unsafe {
+            let space1 = heap_size();
             let now = Instant::now();
             let vec = pushvec2(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            let space2 = heap_size();
             let now = Instant::now();
             popvec2(vec, size);
-            (time, now.elapsed().as_micros() as f64 * 0.001)
+            assert_eq!(heap_size(), space1);
+            (
+                time,
+                now.elapsed().as_micros() as f64 * 0.001,
+                space2 - space1,
+            )
         };
 
         let rustslinkedlist = |size| {
@@ -354,11 +397,12 @@ mod tests {
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
             let now = Instant::now();
+            let space = ll.get_size();
             for _ in 0..size {
                 std::hint::black_box(ll.pop_front());
             }
             drop(ll);
-            (time, now.elapsed().as_micros() as f64 * 0.001)
+            (time, now.elapsed().as_micros() as f64 * 0.001, space)
         };
 
         let rustvecdeque = |size| {
@@ -368,12 +412,13 @@ mod tests {
                 vd.push_front(i);
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            let space = vd.get_size();
             let now = Instant::now();
             for _ in 0..size {
                 std::hint::black_box(vd.pop_front());
             }
             drop(vd);
-            (time, now.elapsed().as_micros() as f64 * 0.001)
+            (time, now.elapsed().as_micros() as f64 * 0.001, space)
         };
 
         let mut tpush = table!([H6c->"Push Benchmark"],[
@@ -394,51 +439,92 @@ mod tests {
             "Rust LinkedList",
             "Rust VecDeque",
         ]);
+        let mut space = table!([H6c->"Space Benchmark"],[
+            "Size",
+            "MPL linked list FILO",
+            "MPL linked list FIFO",
+            "MPL map",
+            //"MPL map 2",
+            "Rust LinkedList",
+            "Rust VecDeque",
+        ]);
         for p in 2..8 {
             let n = 10u64.pow(p);
-            let (mplpushstack, mplpopstack) = sum2(RUNS, || mplstack(n));
-            let (mplpushqueue, mplpopqueue) = sum2(RUNS, || mplqueue(n));
-            //let (mplpushvec, mplpopvec) = average2(RUNS, || mplvec(n));
-            let (mplpushvec2, mplpopvec2) = sum2(RUNS, || mplvec2(n));
-            let (rustpushll, rustpopll) = sum2(RUNS, || rustslinkedlist(n));
-            let (rustpushvecdeque, rustpopvecdeque) = sum2(RUNS, || rustvecdeque(n));
-            tpush.add_row(row![
-                format!("10^{p}"),
-                format!("{mplpushstack:.2}ms"),
-                format!("{mplpushqueue:.2}ms"),
-                //format!("{mplpushvec:.2}ms"),
-                format!("{mplpushvec2:.2}ms"),
-                format!("{rustpushll:.2}ms"),
-                format!("{rustpushvecdeque:.2}ms"),
-            ]);
-            tpop.add_row(row![
-                format!("10^{p}"),
-                format!("{mplpopstack:.2}ms"),
-                format!("{mplpopqueue:.2}ms"),
-                //format!("{mplpopvec:.2}ms"),
-                format!("{mplpopvec2:.2}ms"),
-                format!("{rustpopll:.2}ms"),
-                format!("{rustpopvecdeque:.2}ms"),
-            ]);
+            let (mplpushstack, mplpopstack, mplstackspace) = sum3(RUNS, || mplstack(n));
+            let (mplpushqueue, mplpopqueue, mplqueuespace) = sum3(RUNS, || mplqueue(n));
+            let (mplpushvec2, mplpopvec2, mplvec2space) = sum3(RUNS, || mplvec2(n));
+            let (rustpushll, rustpopll, rustllspace) = sum3(RUNS, || rustslinkedlist(n));
+            let (rustpushvecdeque, rustpopvecdeque, rustdequespace) =
+                sum3(RUNS, || rustvecdeque(n));
+            #[cfg(feature = "heapsize")]
+            {
+                space.add_row(row![
+                    format!("10^{p}"),
+                    format!("{:.2} B/key", mplstackspace as f64 / n as f64 / RUNS as f64),
+                    format!("{:.2} B/key", mplqueuespace as f64 / n as f64 / RUNS as f64),
+                    format!("{:.2} B/key", mplvec2space as f64 / n as f64 / RUNS as f64),
+                    format!("{:.2} B/key", rustllspace as f64 / n as f64 / RUNS as f64),
+                    format!(
+                        "{:.2} B/key",
+                        rustdequespace as f64 / n as f64 / RUNS as f64
+                    ),
+                ]);
+            }
+            #[cfg(not(feature = "heapsize"))]
+            {
+                tpush.add_row(row![
+                    format!("10^{p}"),
+                    format!("{mplpushstack:.2}ms"),
+                    format!("{mplpushqueue:.2}ms"),
+                    //format!("{mplpushvec:.2}ms"),
+                    format!("{mplpushvec2:.2}ms"),
+                    format!("{rustpushll:.2}ms"),
+                    format!("{rustpushvecdeque:.2}ms"),
+                ]);
+                tpop.add_row(row![
+                    format!("10^{p}"),
+                    format!("{mplpopstack:.2}ms"),
+                    format!("{mplpopqueue:.2}ms"),
+                    //format!("{mplpopvec:.2}ms"),
+                    format!("{mplpopvec2:.2}ms"),
+                    format!("{rustpopll:.2}ms"),
+                    format!("{rustpopvecdeque:.2}ms"),
+                ]);
+            }
         }
-        tpush.printstd();
-        let mut f = File::create("./benchmark/push.txt").unwrap();
-        _ = tpush.print(&mut f);
-        f = OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open("./benchmark/push.txt")
-            .unwrap();
-        _ = writeln!(f, "{}", table_to_latex_tabular_inner(tpush));
-        tpop.printstd();
-        let mut f = File::create("./benchmark/pop.txt").unwrap();
-        _ = tpop.print(&mut f);
-        f = OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open("./benchmark/pop.txt")
-            .unwrap();
-        _ = writeln!(f, "{}", table_to_latex_tabular_inner(tpop));
+        #[cfg(feature = "heapsize")]
+        {
+            space.printstd();
+            let mut f = File::create("./benchmark/pushpop_space.txt").unwrap();
+            _ = space.print(&mut f);
+            f = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open("./benchmark/push.txt")
+                .unwrap();
+            _ = writeln!(f, "{}", table_to_latex_tabular_inner(space));
+        }
+        #[cfg(not(feature = "heapsize"))]
+        {
+            tpush.printstd();
+            let mut f = File::create("./benchmark/push.txt").unwrap();
+            _ = tpush.print(&mut f);
+            f = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open("./benchmark/push.txt")
+                .unwrap();
+            _ = writeln!(f, "{}", table_to_latex_tabular_inner(tpush));
+            tpop.printstd();
+            let mut f = File::create("./benchmark/pop.txt").unwrap();
+            _ = tpop.print(&mut f);
+            f = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open("./benchmark/pop.txt")
+                .unwrap();
+            _ = writeln!(f, "{}", table_to_latex_tabular_inner(tpop));
+        }
         Ok(())
     }
 
@@ -451,19 +537,24 @@ mod tests {
         let module = &context.create_module("module");
         let compiler = compile::compile(&context, builder, module, ast);
 
+        let heap_size = compiler.get_function::<unsafe extern "C" fn() -> u64>("heapSize");
+
         let tree_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("BTreeFill");
         let tree_empty = compiler.get_function::<unsafe extern "C" fn(u64, u64)>("BTreeEmpty");
         let tree_free = compiler.get_function::<unsafe extern "C" fn(u64)>("BTreeFree");
 
         let mpltree = |size| unsafe {
+            let space1 = heap_size();
             let mut now = Instant::now();
             let tree = tree_fill(size);
             let time1 = now.elapsed().as_micros() as f64 * 0.001;
+            let space2 = heap_size();
             now = Instant::now();
             tree_empty(tree, size);
             let time2 = now.elapsed().as_micros() as f64 * 0.001;
             tree_free(tree);
-            (time1, time2)
+            assert_eq!(space1, heap_size());
+            (time1, time2, space2 - space1)
         };
 
         let rusttree = |size| {
@@ -478,15 +569,17 @@ mod tests {
             }
             let time1 = now.elapsed().as_micros() as f64 * 0.001;
             now = Instant::now();
+
             BinaryTree::print(&tree, 0);
+            let space = tree.as_ref().unwrap().get_size() as u64;
             for i in 0..size {
                 tree = BinaryTree::remove(tree, i);
             }
             let time2 = now.elapsed().as_micros() as f64 * 0.001;
             drop(tree);
-            (time1, time2)
+            (time1, time2, space)
         };
-
+        #[cfg(not(feature = "heapsize"))]
         let mut t = table!([H5c->"BinaryTree Benchmark"],[
             "Keys",
             "MPL insert",
@@ -494,10 +587,23 @@ mod tests {
             "Rust insert",
             "Rust remove",
         ]);
+        #[cfg(feature = "heapsize")]
+        let mut t = table!([H3c->"BinaryTree Space Benchmark"],[
+            "Keys",
+            "MPL",
+            "Rust",
+        ]);
         for p in 2..7 {
             let n = 10u64.pow(p);
-            let (pmltreeinsert, pmltreeremove) = sum2(RUNS, || mpltree(n));
-            let (rusttreeinsert, rusttreeremove) = sum2(RUNS, || rusttree(n));
+            let (pmltreeinsert, pmltreeremove, mplspace) = sum3(RUNS, || mpltree(n));
+            let (rusttreeinsert, rusttreeremove, rustspace) = sum3(RUNS, || rusttree(n));
+            #[cfg(feature = "heapsize")]
+            t.add_row(row![
+                format!("10^{p}"),
+                format!("{:.2} B/key", mplspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2} B/key", rustspace as f64 / n as f64 / RUNS as f64),
+            ]);
+            #[cfg(not(feature = "heapsize"))]
             t.add_row(row![
                 format!("10^{p}"),
                 format!("{pmltreeinsert:.2}ms"),
@@ -506,13 +612,17 @@ mod tests {
                 format!("{rusttreeremove:.2}ms"),
             ]);
         }
+        #[cfg(not(feature = "heapsize"))]
+        let path = "./benchmark/tree.txt";
+        #[cfg(feature = "heapsize")]
+        let path = "./benchmark/tree_space.txt";
         t.printstd();
-        let mut f = File::create("./benchmark/tree.txt").unwrap();
+        let mut f = File::create(path).unwrap();
         _ = t.print(&mut f);
         f = OpenOptions::new()
             .write(true)
             .append(true)
-            .open("./benchmark/tree.txt")
+            .open(path)
             .unwrap();
         _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
@@ -531,6 +641,20 @@ mod tests {
         pub value: T,
         pub left: Option<Box<BinaryTree<T>>>,
         pub right: Option<Box<BinaryTree<T>>>,
+    }
+
+    impl GetSize for BinaryTree<u64> {
+        fn get_heap_size(&self) -> usize {
+            let l = match &self.left {
+                Some(b) => b.get_size(),
+                None => 0,
+            };  
+			let r = match &self.right {
+                Some(b) => b.get_size(),
+                None => 0,
+            };  
+			l + r
+        }
     }
 
     impl<T: Ord + Copy + Display> BinaryTree<T> {
@@ -628,7 +752,7 @@ mod tests {
             }
             let s = s.as_ref().unwrap();
             BinaryTree::print(&s.right, indent + 1);
-            for i in 0..indent {
+            for _ in 0..indent {
                 print!("\t")
             }
             println!("{}", s.value);
