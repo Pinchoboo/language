@@ -10,7 +10,11 @@ opt-level = 3
 RUST_TEST_THREADS = "1"
 
 [features]
+default = []
+# mpl emits debug info
 debugmpl = []
+# enables heap debugging
+heapsize = []  
 
 [dependencies]
 derivative = "2.2.0"

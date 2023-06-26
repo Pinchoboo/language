@@ -14,10 +14,12 @@ use inkwell::{
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
     targets::{InitializationConfig, Target, TargetTriple},
-    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
+    types::{
+        BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, PointerType, StructType,
+    },
     values::{
         ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
-        FunctionValue, PointerValue,
+        FunctionValue, GlobalValue, IntValue, PointerValue,
     },
     AddressSpace, IntPredicate, OptimizationLevel,
 };
@@ -43,6 +45,8 @@ pub struct Compiler<'ctx, 'a> {
     mapstructs: HashMap<String, StructType<'ctx>>,
     structbodies: Vec<(StructType<'ctx>, Vec<BasicTypeEnum<'ctx>>)>,
     ee: Option<ExecutionEngine<'ctx>>,
+    #[cfg(feature = "heapsize")]
+    space: GlobalValue<'ctx>,
 }
 
 pub fn compile<'ctx, 'a>(
@@ -61,6 +65,12 @@ pub fn compile<'ctx, 'a>(
         mapstructs: HashMap::new(),
         structbodies: Vec::new(),
         ee: None,
+        #[cfg(feature = "heapsize")]
+        space: {
+            let s = module.add_global(context.i64_type(), None, "ALLOC_DEBUG");
+            s.set_initializer(&context.i64_type().const_zero());
+            s
+        },
     };
     c.compile(program);
     c
@@ -192,6 +202,110 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 panic!()
             }
         }
+    }
+
+    #[cfg(feature = "heapsize")]
+    fn add_alloc(&self, v: IntValue) {
+        self.builder.build_store(
+            self.space.as_pointer_value(),
+            self.builder.build_int_add(
+                v,
+                self.builder
+                    .build_load(self.space.as_pointer_value(), "")
+                    .into_int_value(),
+                "",
+            ),
+        );
+    }
+
+    #[cfg(feature = "heapsize")]
+    fn remove_alloc(&self, v: IntValue) {
+        self.builder.build_store(
+            self.space.as_pointer_value(),
+            self.builder.build_int_sub(
+                self.builder
+                    .build_load(self.space.as_pointer_value(), "")
+                    .into_int_value(),
+                v,
+                "",
+            ),
+        );
+    }
+
+    fn emit_get_alloc(&self) -> CallSiteValue<'ctx> {
+        self.builder.build_call(
+            self.module.get_function(functions::HEAP_SIZE).unwrap(),
+            &[],
+            "",
+        )
+    }
+
+    fn build_malloc<T>(&mut self, ty: T) -> Result<PointerValue<'ctx>, &'static str>
+    where
+        T: BasicType<'ctx>,
+    {
+        #[cfg(feature = "heapsize")]
+        {
+            self.add_alloc(ty.size_of().unwrap())
+        }
+        self.builder.build_malloc(ty, "")
+    }
+
+    fn build_array_malloc<T>(
+        &mut self,
+        ty: T,
+        size: IntValue<'ctx>,
+    ) -> Result<PointerValue<'ctx>, &'static str>
+    where
+        T: BasicType<'ctx>,
+    {
+        #[cfg(feature = "heapsize")]
+        {
+            self.add_alloc(
+                self.builder.build_int_mul(
+                    ty.size_of().unwrap(),
+                    self.builder
+                        .build_int_cast(size, self.context.i64_type(), ""),
+                    "",
+                ),
+            )
+        }
+        self.builder.build_array_malloc(ty, size, "")
+    }
+    fn build_calloc<T>(&self, t: T, n: BasicMetadataValueEnum<'ctx>) -> PointerValue
+    where
+        T: BasicType<'ctx>,
+    {
+        #[cfg(feature = "heapsize")]
+        {
+            self.add_alloc(
+                self.builder.build_int_mul(
+                    self.builder
+                        .build_int_cast(n.into_int_value(), self.context.i64_type(), ""),
+                    t.size_of().unwrap(),
+                    "",
+                ),
+            )
+        }
+        self.builder
+            .build_bitcast(
+                self.builder
+                    .build_call(
+                        self.module.get_function(CALLOC).unwrap(),
+                        &[
+                            n,
+                            self.builder
+                                .build_bitcast(t.size_of().unwrap(), self.context.i32_type(), "")
+                                .into(),
+                        ],
+                        "calloc",
+                    )
+                    .try_as_basic_value()
+                    .unwrap_left(),
+                t.ptr_type(AddressSpace::default()),
+                "",
+            )
+            .into_pointer_value()
     }
 
     fn llvmtype(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> BasicTypeEnum<'ctx> {
@@ -355,6 +469,26 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 ),
                 Some(Linkage::External),
             );
+            self.builder
+                .position_at_end(self.context.append_basic_block(
+                    self.module.add_function(
+                        functions::HEAP_SIZE,
+                        self.context.i64_type().fn_type(&[], false),
+                        None,
+                    ),
+                    "entry",
+                ));
+            #[cfg(feature = "heapsize")]
+            {
+                self.builder.build_return(Some(
+                    &self.builder.build_load(self.space.as_pointer_value(), ""),
+                ));
+            }
+            #[cfg(not(feature = "heapsize"))]
+            {
+                self.builder
+                    .build_return(Some(&self.context.i64_type().const_zero()));
+            }
         }
 
         for fm in program.findmaps {
@@ -626,6 +760,24 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                             .builder
                             .build_struct_gep(map, MAP_STATES, "states_ptr")
                             .unwrap();
+
+                        #[cfg(feature = "heapsize")]
+                        {
+                            self.remove_alloc(
+                                self.builder.build_int_mul(
+                                    self.context.i64_type().size_of(),
+                                    self.builder
+                                        .build_load(
+                                            self.builder
+                                                .build_struct_gep(map, MAP_CAPACITY, "capacity")
+                                                .unwrap(),
+                                            "",
+                                        )
+                                        .into_int_value(),
+                                    "",
+                                ),
+                            )
+                        }
                         self.builder.build_free(
                             self.builder
                                 .build_load(states, "states")
@@ -636,6 +788,26 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 .builder
                                 .build_struct_gep(map, MAP_KEYS, "keys_ptr")
                                 .unwrap();
+                            #[cfg(feature = "heapsize")]
+                            {
+                                let keysize =
+                                    self.llvmtype(&k, scopeinfo.clone()).size_of().unwrap();
+
+                                self.remove_alloc(
+                                    self.builder.build_int_mul(
+                                        keysize,
+                                        self.builder
+                                            .build_load(
+                                                self.builder
+                                                    .build_struct_gep(map, MAP_CAPACITY, "capacity")
+                                                    .unwrap(),
+                                                "",
+                                            )
+                                            .into_int_value(),
+                                        "",
+                                    ),
+                                )
+                            }
                             self.builder.build_free(
                                 self.builder.build_load(keys, "keys").into_pointer_value(),
                             );
@@ -646,18 +818,77 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 .builder
                                 .build_struct_gep(map, map_values(&k), "values_ptr")
                                 .unwrap();
+                            #[cfg(feature = "heapsize")]
+                            {
+                                let valuesize =
+                                    self.llvmtype(&v, scopeinfo.clone()).size_of().unwrap();
+                                self.remove_alloc(
+                                    self.builder.build_int_mul(
+                                        valuesize,
+                                        self.builder
+                                            .build_load(
+                                                self.builder
+                                                    .build_struct_gep(map, MAP_CAPACITY, "capacity")
+                                                    .unwrap(),
+                                                "",
+                                            )
+                                            .into_int_value(),
+                                        "",
+                                    ),
+                                )
+                            }
                             self.builder.build_free(
                                 self.builder
                                     .build_load(values, "values")
                                     .into_pointer_value(),
                             );
                         }
-
+                        #[cfg(feature = "heapsize")]
+                        {
+                            let mapsize = self
+                                .llvmstruct(&Type::Map(k.clone(), v.clone()), scopeinfo.clone())
+                                .size_of()
+                                .unwrap();
+                            self.remove_alloc(mapsize)
+                        }
                         self.builder.build_free(map);
                     }
-                    Some((_, Type::StructMap(_), _, _)) => {
+                    Some((_, Type::StructMap(s), _, _)) => {
+                        let fsmt =
+                            typecheck::find_structmaptype(s, scopeinfo.clone()).expect("exists");
                         let mapptr = self.vars.get(i).unwrap();
                         let map = self.builder.build_load(*mapptr, "").into_pointer_value();
+                        let flags = self
+                            .builder
+                            .build_load(
+                                self.builder
+                                    .build_struct_gep(map, STRUCT_MAP_FLAGS, "flags_ptr")
+                                    .unwrap(),
+                                "",
+                            )
+                            .into_pointer_value();
+                        #[cfg(feature = "heapsize")]
+                        {
+                            self.remove_alloc(
+                                self.builder.build_int_mul(
+                                    self.context.bool_type().size_of(),
+                                    self.context
+                                        .i64_type()
+                                        .const_int(fsmt.1.len() as u64, false),
+                                    "flag_size",
+                                ),
+                            );
+                        }
+                        self.builder.build_free(flags);
+
+                        #[cfg(feature = "heapsize")]
+                        {
+                            let mapsize = self
+                                .llvmstruct(&Type::StructMap(s), scopeinfo.clone())
+                                .size_of()
+                                .unwrap();
+                            self.remove_alloc(mapsize)
+                        }
                         self.builder.build_free(map);
                     }
                     _ => {
@@ -1055,10 +1286,10 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 let call_block = self.builder.get_insert_block().unwrap();
                 self.builder
                     .position_at_end(self.context.append_basic_block(fv, "entry"));
-                let map = self
-                    .builder
-                    .build_malloc(self.llvmstruct(maptype, scopeinfo.clone()), "map")
-                    .unwrap();
+                let map = {
+                    let t = self.llvmstruct(maptype, scopeinfo.clone());
+                    self.build_malloc(t).unwrap()
+                };
 
                 let capacity = self
                     .builder
@@ -1092,13 +1323,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     self.builder.build_store(
                         keys,
                         self.builder.build_bitcast(
-                            self.builder
-                                .build_malloc(
-                                    self.llvmtype(k, scopeinfo.clone())
-                                        .array_type(initial_capacity),
-                                    "keys_alloc",
-                                )
-                                .unwrap(),
+                            {
+                                let t = self
+                                    .llvmtype(k, scopeinfo.clone())
+                                    .array_type(initial_capacity);
+                                self.build_malloc(t).unwrap()
+                            },
                             self.llvmtype(k, scopeinfo.clone())
                                 .ptr_type(AddressSpace::default()),
                             "keys_ptr",
@@ -1109,14 +1339,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     .builder
                     .build_struct_gep(map, MAP_STATES, "map.states")
                     .unwrap();
-                let states_alloc = self
-                    .builder
-                    .build_malloc(
-                        self.llvmtype(&Type::Int, scopeinfo.clone())
-                            .array_type(initial_capacity),
-                        "states_alloc",
-                    )
-                    .unwrap();
+                let states_alloc = {
+                    let t = self
+                        .llvmtype(&Type::Int, scopeinfo.clone())
+                        .array_type(initial_capacity);
+                    self.build_malloc(t).unwrap()
+                };
                 self.builder.build_call(
                     self.module.get_function(MEMSET).unwrap(),
                     &[
@@ -1159,13 +1387,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     self.builder.build_store(
                         values,
                         self.builder.build_bitcast(
-                            self.builder
-                                .build_malloc(
-                                    self.llvmtype(v, scopeinfo.clone())
-                                        .array_type(initial_capacity),
-                                    "values_alloc",
-                                )
-                                .unwrap(),
+                            {
+                                let t = self
+                                    .llvmtype(v, scopeinfo.clone())
+                                    .array_type(initial_capacity);
+                                self.build_malloc(t).unwrap()
+                            },
                             self.llvmtype(v, scopeinfo.clone())
                                 .ptr_type(AddressSpace::default()),
                             "values_ptr",
@@ -1521,8 +1748,14 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     &{ "%f" },
                     &args
                         .iter()
-                        .map(|f| self.builder.build_bitcast(f.into_int_value(), self.context.f64_type(), "").into()).collect::<Vec<_>>(),
+                        .map(|f| {
+                            self.builder
+                                .build_bitcast(f.into_int_value(), self.context.f64_type(), "")
+                                .into()
+                        })
+                        .collect::<Vec<_>>(),
                 ),
+                functions::HEAP_SIZE => self.emit_get_alloc(),
                 _ => {
                     panic!("unknown function: {id}")
                 }
@@ -1628,7 +1861,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                             &fname,
                             self.llvmfunctiontype(
                                 &Type::Unit,
-                                scopeinfo,
+                                scopeinfo.clone(),
                                 &[llvmmaptype.into()],
                                 false,
                             ),
@@ -1639,7 +1872,15 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                             .position_at_end(self.context.append_basic_block(fv, "entry"));
 
                         let map = fv.get_nth_param(0).unwrap().into_pointer_value();
-
+                        let oldcapacity = self
+                            .builder
+                            .build_load(
+                                self.builder
+                                    .build_struct_gep(map, MAP_CAPACITY, "capacity")
+                                    .unwrap(),
+                                "",
+                            )
+                            .into_int_value();
                         self.builder.build_store(
                             self.builder
                                 .build_struct_gep(map, MAP_CAPACITY, "capacity")
@@ -1668,18 +1909,26 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 .build_struct_gep(map, MAP_KEYS, "keys.ptr")
                                 .unwrap();
                             let keys = self.builder.build_load(keyptr, "keys");
+                            #[cfg(feature = "heapsize")]
+                            {
+                                let keysize =
+                                    self.llvmtype(&k, scopeinfo.clone()).size_of().unwrap();
+                                self.remove_alloc(self.builder.build_int_mul(
+                                    keysize,
+                                    oldcapacity,
+                                    "",
+                                ))
+                            }
                             self.builder.build_free(keys.into_pointer_value());
                             self.builder.build_store(
                                 keyptr,
-                                self.builder
-                                    .build_array_malloc(
-                                        llvmkeytype,
-                                        self.context
-                                            .i32_type()
-                                            .const_int(initial_capacity.into(), false),
-                                        "",
-                                    )
-                                    .unwrap(),
+                                self.build_array_malloc(
+                                    llvmkeytype,
+                                    self.context
+                                        .i32_type()
+                                        .const_int(initial_capacity.into(), false),
+                                )
+                                .unwrap(),
                             );
                         }
                         if Type::Unit.ne(&v) {
@@ -1688,18 +1937,26 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 .build_struct_gep(map, map_values(&k), "values.ptr")
                                 .unwrap();
                             let values = self.builder.build_load(valuesptr, "values");
+                            #[cfg(feature = "heapsize")]
+                            {
+                                let valuesize =
+                                    self.llvmtype(&v, scopeinfo.clone()).size_of().unwrap();
+                                self.remove_alloc(self.builder.build_int_mul(
+                                    valuesize,
+                                    oldcapacity,
+                                    "",
+                                ))
+                            }
                             self.builder.build_free(values.into_pointer_value());
                             self.builder.build_store(
                                 valuesptr,
-                                self.builder
-                                    .build_array_malloc(
-                                        llvmvaluetype,
-                                        self.context
-                                            .i32_type()
-                                            .const_int(initial_capacity.into(), false),
-                                        "",
-                                    )
-                                    .unwrap(),
+                                self.build_array_malloc(
+                                    llvmvaluetype,
+                                    self.context
+                                        .i32_type()
+                                        .const_int(initial_capacity.into(), false),
+                                )
+                                .unwrap(),
                             );
                         }
                         let statessptr = self
@@ -1707,10 +1964,21 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                             .build_struct_gep(map, MAP_STATES, "states.ptr")
                             .unwrap();
                         let states = self.builder.build_load(statessptr, "states");
+                        #[cfg(feature = "heapsize")]
+                        {
+                            let statesize = self.context.i64_type().size_of();
+                            self.remove_alloc(
+                                self.builder.build_int_mul(
+                                    statesize,
+                                    oldcapacity,
+                                    "",
+                                ),
+                            )
+                        }
                         self.builder.build_free(states.into_pointer_value());
                         self.builder.build_store(
                             statessptr,
-                            self.emit_calloc(
+                            self.build_calloc(
                                 self.context.i64_type(),
                                 self.context
                                     .i32_type()
@@ -3465,10 +3733,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         .build_int_mul(llvmk.size_of().unwrap(), newcap, "")
                         .into()],
                 );
-                let newkeys = self
-                    .builder
-                    .build_array_malloc(llvmk, newcap, "newkeys")
-                    .unwrap();
+                let newkeys = self.build_array_malloc(llvmk, newcap).unwrap();
                 let newkeys = self
                     .builder
                     .build_bitcast(newkeys, llvmk.ptr_type(AddressSpace::default()), "")
@@ -3477,16 +3742,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 self.debug("\tkeys alocated\n", []);
 
                 let newvalues = if Type::Unit.ne(v) {
-                    Some(
-                        self.builder
-                            .build_array_malloc(llvmv, newcap, "newvalues")
-                            .unwrap(),
-                    )
+                    Some(self.build_array_malloc(llvmv, newcap).unwrap())
                 } else {
                     None
                 };
                 self.debug("\tvalues alocated\n", []);
-                let newstates = self.emit_calloc(
+                let newstates = self.build_calloc(
                     self.context.i64_type(),
                     self.builder
                         .build_int_cast(newcap, self.context.i32_type(), "")
@@ -3643,22 +3904,44 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 self.builder.position_at_end(afterif);
                 self.builder.build_unconditional_branch(forinc);
                 self.builder.position_at_end(afterfor);
-
+                #[cfg(feature = "heapsize")]
+                {
+                    self.remove_alloc(self.builder.build_int_mul(
+                        llvmk.size_of().unwrap(),
+                        oldcap,
+                        "",
+                    ))
+                }
                 self.builder.build_free(mapkeys);
                 self.builder.build_store(mapkeysptr, newkeys);
                 if Type::Unit.ne(v) {
                     let mapvaluesptr = self
                         .builder
-                        .build_struct_gep(map, map_values(&k), "map.values.ptr")
+                        .build_struct_gep(map, map_values(k), "map.values.ptr")
                         .unwrap();
                     let mapvalues = self
                         .builder
                         .build_load(mapvaluesptr, "map.values")
                         .into_pointer_value();
+                    #[cfg(feature = "heapsize")]
+                    {
+                        self.remove_alloc(self.builder.build_int_mul(
+                            llvmv.size_of().unwrap(),
+                            oldcap,
+                            "",
+                        ))
+                    }
                     self.builder.build_free(mapvalues);
                     self.builder.build_store(mapvaluesptr, newvalues.unwrap());
                 }
-
+                #[cfg(feature = "heapsize")]
+                {
+                    self.remove_alloc(self.builder.build_int_mul(
+                        self.context.i64_type().size_of(),
+                        oldcap,
+                        "",
+                    ))
+                }
                 self.builder.build_free(mapstates);
                 self.builder.build_store(mapstatesptr, newstates);
 
@@ -3689,31 +3972,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
         }
     }
 
-    fn emit_calloc<T>(&self, t: T, n: BasicMetadataValueEnum<'ctx>) -> PointerValue
-    where
-        T: BasicType<'ctx>,
-    {
-        self.builder
-            .build_bitcast(
-                self.builder
-                    .build_call(
-                        self.module.get_function(CALLOC).unwrap(),
-                        &[
-                            n,
-                            self.builder
-                                .build_bitcast(t.size_of().unwrap(), self.context.i32_type(), "")
-                                .into(),
-                        ],
-                        "calloc",
-                    )
-                    .try_as_basic_value()
-                    .unwrap_left(),
-                t.ptr_type(AddressSpace::default()),
-                "",
-            )
-            .into_pointer_value()
-    }
-
     fn structmapcreate(
         &mut self,
         maptype: &Type<'b>,
@@ -3725,6 +3983,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 fv
             } else {
                 let smt = typecheck::find_structmaptype(id, scopeinfo.clone()).unwrap();
+
                 let fv = self.module.add_function(
                     &fname,
                     self.llvmfunctiontype(maptype, scopeinfo.clone(), &[], false),
@@ -3734,7 +3993,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 let llvmmaptype = self.llvmstruct(maptype, scopeinfo.clone());
                 self.builder
                     .position_at_end(self.context.append_basic_block(fv, "entry"));
-                let map = self.builder.build_malloc(llvmmaptype, "map").unwrap();
+                let map = self.build_malloc(llvmmaptype).unwrap();
                 let size = self
                     .builder
                     .build_struct_gep(map, STRUCT_MAP_SIZE, "map.size")
@@ -3746,7 +4005,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     self.builder
                         .build_struct_gep(map, STRUCT_MAP_FLAGS, "")
                         .unwrap(),
-                    self.emit_calloc(
+                    self.build_calloc(
                         booltype,
                         self.context
                             .i32_type()

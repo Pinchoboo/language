@@ -1,8 +1,12 @@
 fn int main(){
+	printInt(heapSize())
+	printLn()
 	[int->void] m = hashSetFill(100000000)
-	printInt(m.size())
+	printInt(heapSize())
 	printLn()
 	free m
+	printInt(heapSize())
+	printLn()
 	return 0
 }
 

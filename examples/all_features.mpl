@@ -119,3 +119,21 @@ fn linkedListfn(){
 	free ll
 	free maybeNextNode
 }
+
+/* find a perfect minimal hash map at compile time */
+find perfect [perfect [int -> char] -> int] test = [
+	"i" -> 0
+	"am" -> 1
+	"hashing" -> 2
+	"strings" -> 3
+]
+
+fn perfecttest(){
+	printInt(test.get("i"))
+	printLn()
+	printInt(test.get("am"))
+	printLn()
+	printInt(test.get("hashing"))
+	printLn()
+	printInt(test.get("strings"))
+}
