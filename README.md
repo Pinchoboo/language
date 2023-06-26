@@ -3,6 +3,7 @@ Compiler and some example programs in MPL.
 
 The rust source code is spaghetti without comments.
 
+check out [all features](examples/all_features.mpl)
 # Requirements
 llvm12
 
