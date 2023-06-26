@@ -1,23 +1,39 @@
 #[cfg(test)]
 mod tests {
-	use std::{io::Write, fs::OpenOptions, fmt::Display};
+    use crate::{check, compile, parser};
+    use get_size::GetSize;
     use inkwell::context::Context;
     use prettytable::{row, table, Table};
     use std::{
         collections::{HashMap, HashSet, LinkedList, VecDeque},
+        fmt::Debug,
         fs::File,
         mem::take,
         time::Instant,
     };
-    use crate::{check, compile, parser};
+    use std::{
+        fmt::Display,
+        fs::OpenOptions,
+        io::Write,
+        ops::{AddAssign},
+    };
 
-	const RUNS:u64 = 4;
+    const RUNS: u32 = {
+		#[cfg(feature = "heapsize")]
+		{1}
+		#[cfg(not(feature = "heapsize"))]
+		{4}
+	};
+	
 
-    fn average(t: u64, mut f: impl FnMut() -> f64) -> f64 {
+    fn average(t: u32, mut f: impl FnMut() -> f64) -> f64 {
         (0..t).map(|_| f()).sum::<f64>() / (t as f64)
     }
-    fn average2(t: u64, f: impl Fn() -> (f64, f64)) -> (f64, f64) {
-        (0..t).fold((0f64, 0f64), |mut acc, _| {
+    fn sum2<A: AddAssign<A> + Default, B: AddAssign<B> + Default>(
+        t: u32,
+        f: impl Fn() -> (A, B),
+    ) -> (A, B) {
+        (0..t).fold((A::default(), B::default()), |mut acc, _| {
             let f = f();
             acc.0 += f.0;
             acc.1 += f.1;
@@ -43,8 +59,8 @@ mod tests {
     fn benchmark() -> Result<(), ()> {
         fill()?;
         lookup()?;
-        pushpop()?;
-        tree()?;
+        //pushpop()?;
+        //tree()?;
         //graph()?;
         //heap()?;
         Ok(())
@@ -59,15 +75,19 @@ mod tests {
         let module = &context.create_module("module");
         let compiler = compile::compile(&context, builder, module, ast);
 
+        let heap_size = compiler.get_function::<unsafe extern "C" fn() -> u64>("heapSize");
         let set_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashSetFill");
         let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
 
         let mplset = |size| unsafe {
+            let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            let finalsize = heap_size();
             drop_set(set);
-            time
+            assert!(heap_size() == initialsize);
+            (time, finalsize)
         };
 
         let set_fill =
@@ -75,88 +95,133 @@ mod tests {
         let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSetFloat");
 
         let mplsetfloat = |size| unsafe {
+            let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
+            let finalsize = heap_size();
             drop_set(set);
-            time
+            assert!(heap_size() == initialsize);
+            (time, finalsize)
         };
 
         let map_fill = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("hashMapFill");
-        let map_free = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashMap");
+        let drop_map = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashMap");
         let mplmap = |size| unsafe {
+            let initialsize = heap_size();
             let now = Instant::now();
-            let set = map_fill(size);
+            let map = map_fill(size);
             let time = now.elapsed().as_micros() as f64 * 0.001;
-            map_free(set);
-            time
+            let finalsize = heap_size();
+            drop_map(map);
+            assert!(heap_size() == initialsize);
+            (time, finalsize)
         };
         let rustvec = |size| {
             let now = Instant::now();
             let mut m: Vec<u64> = Vec::with_capacity(0);
             for i in 0..size {
-                m.push(std::hint::black_box(i*i));
+                m.push(std::hint::black_box(i * i));
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
+			let space = m.get_size() as u64;
             drop(m);
-            time
+            (time, space)
         };
 
         let rustset = |size| {
             let now = Instant::now();
             let mut m: HashSet<u64> = HashSet::new();
             for i in 0..size {
-                m.insert(i*7);
+                m.insert(i * 7);
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
+			let space = m.get_size() as u64;
             drop(m);
-            time
+            (time, space)
         };
         let rustmap = |size| {
             let now = Instant::now();
             let mut m: HashMap<u64, u64> = HashMap::new();
             for _ in 0..size {
-                m.insert((m.len()*7) as u64, m.len() as u64);
+                m.insert((m.len() * 7) as u64, m.len() as u64);
             }
             let time = now.elapsed().as_micros() as f64 * 0.001;
+			let space = m.get_size() as u64;
             drop(m);
-            time
+            (time, space)
         };
-        let mut t = table!([H7c->"Fill Benchmark"],[
-            "Keys",
-            "MPL set",
-            "MPL map",
-            "MPL set float",
-            "Rust vec",
-            "Rust set",
-            "Rust map"
-        ]);
+        let mut t = if cfg!(feature = "heapsize") {
+			table!([H7c->"Benchmark Space"],[
+                "Keys",
+                "MPL set",
+                "MPL map",
+                "MPL set float",
+                "Rust vec",
+                "Rust set",
+                "Rust map"
+            ])
+        } else {
+            table!([H7c->"Fill Benchmark"],[
+                "Keys",
+                "MPL set",
+                "MPL map",
+                "MPL set float",
+                "Rust vec",
+                "Rust set",
+                "Rust map"
+            ])
+        };
         for p in 2..9 {
             let n = 10u64.pow(p);
-            t.add_row(row![
+            let (mplsettime, mplsetspace) = sum2(RUNS, || mplset(n));
+            let (mplsetfloattime, mplsetfloatspace) = sum2(RUNS, || mplsetfloat(n));
+            let (mplmaptime, mplmapspace) = sum2(RUNS, || mplmap(n));
+			let (rustvectime, rustvecspace) = sum2(RUNS, || rustvec(n));
+			let (rustsettime, rustsetspace) = sum2(RUNS, || rustset(n));
+			let (rustmaptime, rustmapspace) = sum2(RUNS, || rustmap(n));
+            #[cfg(not(feature = "heapsize"))]
+			t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2}ms", average(RUNS, || { mplset(n) })),
-                format!("{:.2}ms", average(RUNS, || { mplmap(n) })),
-                format!("{:.2}ms", average(RUNS, || { mplsetfloat(n) })),
-                format!("{:.2}ms", average(RUNS, || { rustvec(n) })),
-                format!("{:.2}ms", average(RUNS, || { rustset(n) })),
-                format!("{:.2}ms", average(RUNS, || { rustmap(n) }))
+                format!("{:.2}ms", mplsettime / RUNS as f64),
+                format!("{:.2}ms", mplmaptime / RUNS as f64),
+                format!("{:.2}ms", mplsetfloattime / RUNS as f64),
+                format!("{:.2}ms", rustvectime / RUNS as f64),
+                format!("{:.2}ms", rustsettime / RUNS as f64),
+                format!("{:.2}ms", rustmaptime / RUNS as f64)
+            ]);
+			#[cfg(feature = "heapsize")]
+			t.add_row(row![
+                //format!("{runs}"),
+                format!("10^{p}"),
+                format!("{:.2} b/key", mplsetspace / n / RUNS as u64),
+                format!("{:.2} b/key", mplmapspace / n / RUNS as u64),
+                format!("{:.2} b/key", mplsetfloatspace / n / RUNS as u64),
+                format!("{:.2} b/key", rustvecspace / n / RUNS as u64),
+                format!("{:.2} b/key", rustsetspace / n / RUNS as u64),
+                format!("{:.2} b/key", rustmapspace / n / RUNS as u64)
             ]);
         }
+		#[cfg(feature = "heapsize")]
+		let path = "./benchmark/fill_space.txt";
+		#[cfg(not(feature = "heapsize"))]
+		let path = "./benchmark/fill.txt";
         t.printstd();
-        let mut f = File::create("./benchmark/fill.txt").unwrap();
+        let mut f = File::create(path).unwrap();
         _ = t.print(&mut f);
         f = OpenOptions::new()
             .write(true)
             .append(true)
-            .open("./benchmark/fill.txt")
+            .open(path)
             .unwrap();
         _ = writeln!(f, "{}", table_to_latex_tabular_inner(t));
         Ok(())
     }
 
     fn lookup() -> Result<(), ()> {
+		#[cfg(feature = "heapsize")]
+		return Ok(());
         let fp = parser::FileParser::new("./benchmark/lookup.mpl").unwrap();
         let mut ast = fp.parse().unwrap();
         check(&mut ast);
@@ -183,12 +248,12 @@ mod tests {
         let rustmap = |size| {
             let mut map: HashMap<u64, u64> = HashMap::new();
             for i in (0..size).step_by(2) {
-                std::hint::black_box(map.insert(i*7, i));
+                std::hint::black_box(map.insert(i * 7, i));
             }
             let now = Instant::now();
             let mut r = 0;
             for i in 0..size {
-                if let Some(v) = map.get(&(i*7)) {
+                if let Some(v) = map.get(&(i * 7)) {
                     r += std::hint::black_box(*v);
                 }
             }
@@ -214,7 +279,7 @@ mod tests {
         t.printstd();
         let mut f = File::create("./benchmark/lookup.txt").unwrap();
         _ = t.print(&mut f);
-		f = OpenOptions::new()
+        f = OpenOptions::new()
             .write(true)
             .append(true)
             .open("./benchmark/lookup.txt")
@@ -268,7 +333,7 @@ mod tests {
             (time, now.elapsed().as_micros() as f64 * 0.001)
         };
 
-		let pushvec2 = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN2");
+        let pushvec2 = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN2");
         let popvec2 = compiler.get_function::<unsafe extern "C" fn(u64, u64) -> ()>("vecTakeN2");
 
         let mplvec2 = |size| unsafe {
@@ -315,42 +380,42 @@ mod tests {
             "MPL linked list FILO",
             "MPL linked list FIFO",
             "MPL map",
-			//"MPL map 2",
+            //"MPL map 2",
             "Rust LinkedList",
             "Rust VecDeque",
         ]);
-		let mut tpop = table!([H6c->"Pop Benchmark"],[
+        let mut tpop = table!([H6c->"Pop Benchmark"],[
             "Size",
             "MPL linked list FILO",
             "MPL linked list FIFO",
             "MPL map",
-			//"MPL map 2",
+            //"MPL map 2",
             "Rust LinkedList",
             "Rust VecDeque",
         ]);
         for p in 2..8 {
             let n = 10u64.pow(p);
-            let (mplpushstack, mplpopstack) = average2(RUNS, || mplstack(n));
-            let (mplpushqueue, mplpopqueue) = average2(RUNS, || mplqueue(n));
+            let (mplpushstack, mplpopstack) = sum2(RUNS, || mplstack(n));
+            let (mplpushqueue, mplpopqueue) = sum2(RUNS, || mplqueue(n));
             //let (mplpushvec, mplpopvec) = average2(RUNS, || mplvec(n));
-			let (mplpushvec2, mplpopvec2) = average2(RUNS, || mplvec2(n));
-            let (rustpushll, rustpopll) = average2(RUNS, || rustslinkedlist(n));
-            let (rustpushvecdeque, rustpopvecdeque) = average2(RUNS, || rustvecdeque(n));
+            let (mplpushvec2, mplpopvec2) = sum2(RUNS, || mplvec2(n));
+            let (rustpushll, rustpopll) = sum2(RUNS, || rustslinkedlist(n));
+            let (rustpushvecdeque, rustpopvecdeque) = sum2(RUNS, || rustvecdeque(n));
             tpush.add_row(row![
                 format!("10^{p}"),
                 format!("{mplpushstack:.2}ms"),
                 format!("{mplpushqueue:.2}ms"),
                 //format!("{mplpushvec:.2}ms"),
-				format!("{mplpushvec2:.2}ms"),
+                format!("{mplpushvec2:.2}ms"),
                 format!("{rustpushll:.2}ms"),
                 format!("{rustpushvecdeque:.2}ms"),
             ]);
-			tpop.add_row(row![
+            tpop.add_row(row![
                 format!("10^{p}"),
                 format!("{mplpopstack:.2}ms"),
                 format!("{mplpopqueue:.2}ms"),
                 //format!("{mplpopvec:.2}ms"),
-				format!("{mplpopvec2:.2}ms"),
+                format!("{mplpopvec2:.2}ms"),
                 format!("{rustpopll:.2}ms"),
                 format!("{rustpopvecdeque:.2}ms"),
             ]);
@@ -358,16 +423,16 @@ mod tests {
         tpush.printstd();
         let mut f = File::create("./benchmark/push.txt").unwrap();
         _ = tpush.print(&mut f);
-		f = OpenOptions::new()
+        f = OpenOptions::new()
             .write(true)
             .append(true)
             .open("./benchmark/push.txt")
             .unwrap();
         _ = writeln!(f, "{}", table_to_latex_tabular_inner(tpush));
-		tpop.printstd();
+        tpop.printstd();
         let mut f = File::create("./benchmark/pop.txt").unwrap();
         _ = tpop.print(&mut f);
-		f = OpenOptions::new()
+        f = OpenOptions::new()
             .write(true)
             .append(true)
             .open("./benchmark/pop.txt")
@@ -430,8 +495,8 @@ mod tests {
         ]);
         for p in 2..7 {
             let n = 10u64.pow(p);
-            let (pmltreeinsert, pmltreeremove) = average2(RUNS, || mpltree(n));
-            let (rusttreeinsert, rusttreeremove) = average2(RUNS, || rusttree(n));
+            let (pmltreeinsert, pmltreeremove) = sum2(RUNS, || mpltree(n));
+            let (rusttreeinsert, rusttreeremove) = sum2(RUNS, || rusttree(n));
             t.add_row(row![
                 format!("10^{p}"),
                 format!("{pmltreeinsert:.2}ms"),
@@ -443,7 +508,7 @@ mod tests {
         t.printstd();
         let mut f = File::create("./benchmark/tree.txt").unwrap();
         _ = t.print(&mut f);
-		f = OpenOptions::new()
+        f = OpenOptions::new()
             .write(true)
             .append(true)
             .open("./benchmark/tree.txt")
@@ -457,7 +522,7 @@ mod tests {
     }
 
     fn heap() -> Result<(), ()> {
-		Ok(())
+        Ok(())
     }
 
     #[derive(Debug)]
