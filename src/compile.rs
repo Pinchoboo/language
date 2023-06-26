@@ -15,7 +15,8 @@ use inkwell::{
     module::{Linkage, Module},
     targets::{InitializationConfig, Target, TargetTriple},
     types::{
-        BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, PointerType, StructType,
+        BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType, PointerType,
+        StructType,
     },
     values::{
         ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
@@ -106,6 +107,10 @@ pub const STATE_TOMB: u64 = 2;
 const ROT: &str = "llvm.fshr.i64";
 
 impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
+    fn statetype(&self) -> IntType<'ctx> {
+        self.context.custom_width_int_type(2)
+    }
+
     fn llvmstruct(&mut self, t: &Type<'b>, si: Rc<RefCell<ScopeInfo<'b>>>) -> StructType<'ctx> {
         match t {
             Type::Map(k, v) => {
@@ -123,7 +128,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     )
                 };
                 let states = Some(
-                    self.llvmtype(&Type::Int, si.clone())
+                    self.statetype()
                         .ptr_type(AddressSpace::default())
                         .as_basic_type_enum(),
                 );
@@ -319,16 +324,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 .llvmstruct(t, si)
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum(),
-        }
-    }
-    fn llvm_size_int(
-        &mut self,
-        t: &Type<'b>,
-        si: Rc<RefCell<ScopeInfo<'b>>>,
-    ) -> BasicTypeEnum<'ctx> {
-        match t {
-            Type::Float => self.context.i64_type().as_basic_type_enum(),
-            _ => self.llvmtype(t, si),
         }
     }
 
@@ -765,7 +760,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         {
                             self.remove_alloc(
                                 self.builder.build_int_mul(
-                                    self.context.i64_type().size_of(),
+                                    self.statetype().size_of(),
                                     self.builder
                                         .build_load(
                                             self.builder
@@ -1050,7 +1045,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         self.builder.build_int_compare(
                             IntPredicate::EQ,
                             stateidx.into_int_value(),
-                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            self.statetype().const_int(STATE_TAKEN, false),
                             "is_taken",
                         ),
                         validentry,
@@ -1340,9 +1335,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     .build_struct_gep(map, MAP_STATES, "map.states")
                     .unwrap();
                 let states_alloc = {
-                    let t = self
-                        .llvmtype(&Type::Int, scopeinfo.clone())
-                        .array_type(initial_capacity);
+                    let t = self.statetype().array_type(initial_capacity);
                     self.build_malloc(t).unwrap()
                 };
                 self.builder.build_call(
@@ -1358,7 +1351,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         self.context.i32_type().const_zero().into(),
                         self.builder
                             .build_int_cast(
-                                self.llvmtype(&Type::Int, scopeinfo.clone())
+                                self.statetype()
                                     .array_type(initial_capacity)
                                     .size_of()
                                     .unwrap(),
@@ -1373,8 +1366,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     states,
                     self.builder.build_bitcast(
                         states_alloc,
-                        self.llvmtype(&Type::Int, scopeinfo.clone())
-                            .ptr_type(AddressSpace::default()),
+                        self.statetype().ptr_type(AddressSpace::default()),
                         "states_ptr",
                     ),
                 );
@@ -1966,20 +1958,18 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         let states = self.builder.build_load(statessptr, "states");
                         #[cfg(feature = "heapsize")]
                         {
-                            let statesize = self.context.i64_type().size_of();
-                            self.remove_alloc(
-                                self.builder.build_int_mul(
-                                    statesize,
-                                    oldcapacity,
-                                    "",
-                                ),
-                            )
+                            let statesize = self.statetype().size_of();
+                            self.remove_alloc(self.builder.build_int_mul(
+                                statesize,
+                                oldcapacity,
+                                "",
+                            ))
                         }
                         self.builder.build_free(states.into_pointer_value());
                         self.builder.build_store(
                             statessptr,
                             self.build_calloc(
-                                self.context.i64_type(),
+                                self.statetype(),
                                 self.context
                                     .i32_type()
                                     .const_int(initial_capacity.into(), false)
@@ -2116,7 +2106,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                         "",
                                     )
                                 },
-                                self.context.i64_type().const_int(STATE_TOMB, false),
+                                self.statetype().const_int(STATE_TOMB, false),
                             );
                             self.builder
                                 .build_return(Some(&self.context.bool_type().const_all_ones()));
@@ -2192,7 +2182,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 self.builder.build_int_compare(
                                     IntPredicate::NE,
                                     self.builder.build_load(state, "state_idx").into_int_value(),
-                                    self.context.i64_type().const_int(STATE_FREE, false),
+                                    self.statetype().const_int(STATE_FREE, false),
                                     "is_not_state_free",
                                 ),
                                 whilebody,
@@ -2206,7 +2196,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 self.builder.build_int_compare(
                                     IntPredicate::EQ,
                                     self.builder.build_load(state, "state_idx").into_int_value(),
-                                    self.context.i64_type().const_int(STATE_TOMB, false),
+                                    self.statetype().const_int(STATE_TOMB, false),
                                     "is_state_equal_tomb",
                                 ),
                                 afterwhile,
@@ -2245,7 +2235,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                         "",
                                     )
                                 },
-                                self.context.i64_type().const_int(STATE_TOMB, false),
+                                self.statetype().const_int(STATE_TOMB, false),
                             );
                             self.builder.build_store(
                                 tombsptr,
@@ -3047,7 +3037,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     self.builder.build_int_compare(
                         IntPredicate::EQ,
                         self.builder.build_load(state, "state_idx").into_int_value(),
-                        self.context.i64_type().const_int(STATE_TAKEN, false),
+                        self.statetype().const_int(STATE_TAKEN, false),
                         "is_state_taken",
                     ),
                     whilecond2,
@@ -3132,7 +3122,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 self.builder.build_int_compare(
                     IntPredicate::EQ,
                     stateidx,
-                    self.context.i64_type().const_int(STATE_TOMB, false),
+                    self.statetype().const_int(STATE_TOMB, false),
                     "is_state_tomb",
                 ),
                 ifbody,
@@ -3163,7 +3153,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 self.builder.build_int_compare(
                     IntPredicate::NE,
                     stateidx,
-                    self.context.i64_type().const_int(STATE_TAKEN, false),
+                    self.statetype().const_int(STATE_TAKEN, false),
                     "is_not_state_taken",
                 ),
                 elseifbody,
@@ -3191,7 +3181,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         "",
                     )
                 },
-                self.context.i64_type().const_int(STATE_TAKEN, false),
+                self.statetype().const_int(STATE_TAKEN, false),
             );
             if Type::Unit.ne(k) {
                 self.builder.build_store(
@@ -3353,7 +3343,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                     "map.states_i",
                                 )
                                 .into_int_value(),
-                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            self.statetype().const_int(STATE_TAKEN, false),
                             "is_state_taken",
                         ),
                         ifbody,
@@ -3748,7 +3738,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 };
                 self.debug("\tvalues alocated\n", []);
                 let newstates = self.build_calloc(
-                    self.context.i64_type(),
+                    self.statetype(),
                     self.builder
                         .build_int_cast(newcap, self.context.i32_type(), "")
                         .into(),
@@ -3805,7 +3795,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 "map.states_i",
                             )
                             .into_int_value(),
-                        self.context.i64_type().const_int(STATE_TAKEN, false),
+                        self.statetype().const_int(STATE_TAKEN, false),
                         "is_state_taken",
                     ),
                     ifbody,
@@ -3844,7 +3834,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 "newstates_i",
                             )
                             .into_int_value(),
-                        self.context.i64_type().const_int(STATE_TAKEN, false),
+                        self.statetype().const_int(STATE_TAKEN, false),
                         "is_state_taken",
                     ),
                     whilebody,
@@ -3896,7 +3886,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
 
                 self.builder.build_store(
                     unsafe { self.builder.build_gep(newstates, &[newival], "newstates_i") },
-                    self.context.i64_type().const_int(STATE_TAKEN, false),
+                    self.statetype().const_int(STATE_TAKEN, false),
                 );
                 //self.debug("\tKEY:%lu IDX:%lu -> IDX:%lu\n", [key.into(), ival.into(), newival.into()]);
 
@@ -3937,7 +3927,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 #[cfg(feature = "heapsize")]
                 {
                     self.remove_alloc(self.builder.build_int_mul(
-                        self.context.i64_type().size_of(),
+                        self.statetype().size_of(),
                         oldcap,
                         "",
                     ))
@@ -4264,7 +4254,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         self.builder.build_int_compare(
                             IntPredicate::EQ,
                             stateidx.into_int_value(),
-                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            self.statetype().const_int(STATE_TAKEN, false),
                             "is_taken",
                         ),
                         validentry,
@@ -4806,7 +4796,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     self.builder.build_int_compare(
                         IntPredicate::NE,
                         self.builder.build_load(state, "state_idx").into_int_value(),
-                        self.context.i64_type().const_int(STATE_FREE, false),
+                        self.statetype().const_int(STATE_FREE, false),
                         "is_not_state_free",
                     ),
                     whilebody,
@@ -4822,7 +4812,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                     self.builder.build_int_compare(
                         IntPredicate::EQ,
                         self.builder.build_load(state, "state_idx").into_int_value(),
-                        self.context.i64_type().const_int(STATE_TAKEN, false),
+                        self.statetype().const_int(STATE_TAKEN, false),
                         "is_state_taken",
                     ),
                     self.builder
@@ -4841,7 +4831,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         self.builder.build_int_compare(
                             IntPredicate::EQ,
                             self.builder.build_load(state, "state_idx").into_int_value(),
-                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            self.statetype().const_int(STATE_TAKEN, false),
                             "is_state_taken",
                         ),
                         self.builder
@@ -5358,7 +5348,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         self.builder
                             .build_load(state_ptr, "state_idx")
                             .into_int_value(),
-                        self.context.i64_type().const_int(STATE_FREE, false),
+                        self.statetype().const_int(STATE_FREE, false),
                         "is_not_state_free",
                     ),
                     whilebody,
@@ -5377,7 +5367,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                             self.builder
                                 .build_load(state_ptr, "state_idx")
                                 .into_int_value(),
-                            self.context.i64_type().const_int(STATE_TAKEN, false),
+                            self.statetype().const_int(STATE_TAKEN, false),
                             "is_state_taken",
                         ),
                         self.builder

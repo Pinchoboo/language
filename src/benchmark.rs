@@ -59,8 +59,8 @@ mod tests {
     fn benchmark() -> Result<(), ()> {
         fill()?;
         lookup()?;
-        //pushpop()?;
-        //tree()?;
+        pushpop()?;
+        tree()?;
         //graph()?;
         //heap()?;
         Ok(())
@@ -80,6 +80,7 @@ mod tests {
         let drop_set = compiler.get_function::<unsafe extern "C" fn(u64) -> ()>("dropHashSet");
 
         let mplset = |size| unsafe {
+			println!("{size} test");
             let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
@@ -195,12 +196,12 @@ mod tests {
 			t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2} b/key", mplsetspace / n / RUNS as u64),
-                format!("{:.2} b/key", mplmapspace / n / RUNS as u64),
-                format!("{:.2} b/key", mplsetfloatspace / n / RUNS as u64),
-                format!("{:.2} b/key", rustvecspace / n / RUNS as u64),
-                format!("{:.2} b/key", rustsetspace / n / RUNS as u64),
-                format!("{:.2} b/key", rustmapspace / n / RUNS as u64)
+                format!("{:.2} b/key", mplsetspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2} b/key", mplmapspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2} b/key", mplsetfloatspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2} b/key", rustvecspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2} b/key", rustsetspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2} b/key", rustmapspace as f64 / n as f64 / RUNS as f64)
             ]);
         }
 		#[cfg(feature = "heapsize")]

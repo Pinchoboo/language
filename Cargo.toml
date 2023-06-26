@@ -10,7 +10,7 @@ opt-level = 3
 RUST_TEST_THREADS = "1"
 
 [features]
-default = []
+default = ["heapsize"]
 # mpl emits debug info
 debugmpl = []
 # enables heap debugging
