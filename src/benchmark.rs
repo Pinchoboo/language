@@ -462,7 +462,7 @@ mod tests {
                     format!("{:.2} B", mplqueuespace / RUNS as u64),
                     format!("{:.2} B", mplvec2space / RUNS as u64),
                     format!("{:.2} B", rustllspace / RUNS as u64),
-                    format!("{:.2} B/key", rustdequespace / RUNS as u64),
+                    format!("{:.2} B", rustdequespace / RUNS as u64),
                 ]);
             }
             #[cfg(not(feature = "heapsize"))]

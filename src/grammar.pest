@@ -122,7 +122,6 @@ function =  { functionKeyword ~ type? ~ identifier ~ "(" ~ (type ~ identifier ~ 
 for = {forKeyWord ~ identifier ~ "->" ~ identifier ~ inKeyWord ~ value ~ scope }
 return = { (returnKeyword ~ expression?) }
 free = { (freeKeyword ~ identifier) }
-/// no nested functions and nested scopes for now
 block = {
     (for | if | while | assignment | creation | free | mapCall | call)* ~ return?
 }
