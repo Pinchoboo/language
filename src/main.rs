@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::{process::exit};
 
+use get_size::GetSize;
 use inkwell::context::{Context};
 use parser::Program;
 

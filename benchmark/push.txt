@@ -24,3 +24,12 @@ Size&MPL linked list FILO&MPL linked list FIFO&MPL map&Rust LinkedList&Rust VecD
 10^6&163.46ms&295.59ms&88.13ms&64.42ms&20.38ms\\ \hline
 10^7&1860.30ms&3107.72ms&1195.96ms&641.54ms&268.84ms\\ \hline
 
+Space Benchmark\\ \hline
+Size&MPL linked list FILO&MPL linked list FIFO&MPL map&Rust LinkedList&Rust VecDeque\\ \hline
+10^2&3449 B/key&3434 B/key&2309 B/key&824 B/key&10.56 B/key\\ \hline
+10^3&34049 B/key&34034 B/key&28166 B/key&8024 B/key&8.22 B/key\\ \hline
+10^4&340049 B/key&340034 B/key&322844 B/key&80024 B/key&13.11 B/key\\ \hline
+10^5&3400049 B/key&3400034 B/key&3679256 B/key&800024 B/key&10.49 B/key\\ \hline
+10^6&34000049 B/key&34000034 B/key&41910845 B/key&8000024 B/key&8.39 B/key\\ \hline
+10^7&340000049 B/key&340000034 B/key&477392603 B/key&80000024 B/key&13.42 B/key\\ \hline
+

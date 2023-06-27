@@ -1,4 +1,16 @@
+[BTree] = [
+	VALUE -> int
+	LEFT -> [BTree]
+	RIGHT -> [BTree]
+]
+
 fn main(){
+	printInt(heapSize())
+	printLn()
+	new [BTree] tree
+	printInt(heapSize())
+	printLn()
+	
 	printString("Hello World!\n")
 }
 

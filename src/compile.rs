@@ -14,10 +14,7 @@ use inkwell::{
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
     targets::{InitializationConfig, Target, TargetTriple},
-    types::{
-        BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType, PointerType,
-        StructType,
-    },
+    types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType, StructType},
     values::{
         ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, CallSiteValue,
         FunctionValue, GlobalValue, IntValue, PointerValue,
@@ -849,8 +846,6 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                         self.builder.build_free(map);
                     }
                     Some((_, Type::StructMap(s), _, _)) => {
-                        let fsmt =
-                            typecheck::find_structmaptype(s, scopeinfo.clone()).expect("exists");
                         let mapptr = self.vars.get(i).unwrap();
                         let map = self.builder.build_load(*mapptr, "").into_pointer_value();
                         let flags = self
@@ -864,6 +859,8 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                             .into_pointer_value();
                         #[cfg(feature = "heapsize")]
                         {
+                            let fsmt = typecheck::find_structmaptype(s, scopeinfo.clone())
+                                .expect("exists");
                             self.remove_alloc(
                                 self.builder.build_int_mul(
                                     self.context.bool_type().size_of(),
@@ -1873,6 +1870,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 "",
                             )
                             .into_int_value();
+
                         self.builder.build_store(
                             self.builder
                                 .build_struct_gep(map, MAP_CAPACITY, "capacity")

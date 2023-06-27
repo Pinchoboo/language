@@ -2,6 +2,7 @@
 mod tests {
     use crate::{check, compile, parser};
     use get_size::GetSize;
+    use get_size_derive::GetSize;
     use inkwell::context::Context;
     use prettytable::{row, table, Table};
     use std::{
@@ -206,15 +207,12 @@ mod tests {
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2} b/key", mplsetspace as f64 / n as f64 / RUNS as f64),
-                format!("{:.2} b/key", mplmapspace as f64 / n as f64 / RUNS as f64),
-                format!(
-                    "{:.2} b/key",
-                    mplsetfloatspace as f64 / n as f64 / RUNS as f64
-                ),
-                format!("{:.2} b/key", rustvecspace as f64 / n as f64 / RUNS as f64),
-                format!("{:.2} b/key", rustsetspace as f64 / n as f64 / RUNS as f64),
-                format!("{:.2} b/key", rustmapspace as f64 / n as f64 / RUNS as f64)
+                format!("{:.2} B", mplsetspace / RUNS as u64),
+                format!("{:.2} B", mplmapspace / RUNS as u64),
+                format!("{:.2} B", mplsetfloatspace / RUNS as u64),
+                format!("{:.2} B", rustvecspace / RUNS as u64),
+                format!("{:.2} B", rustsetspace / RUNS as u64),
+                format!("{:.2} B", rustmapspace / RUNS as u64)
             ]);
         }
         #[cfg(feature = "heapsize")]
@@ -402,7 +400,7 @@ mod tests {
                 std::hint::black_box(ll.pop_front());
             }
             drop(ll);
-            (time, now.elapsed().as_micros() as f64 * 0.001, space)
+            (time, now.elapsed().as_micros() as f64 * 0.001, space as u64)
         };
 
         let rustvecdeque = |size| {
@@ -460,10 +458,10 @@ mod tests {
             {
                 space.add_row(row![
                     format!("10^{p}"),
-                    format!("{:.2} B/key", mplstackspace as f64 / n as f64 / RUNS as f64),
-                    format!("{:.2} B/key", mplqueuespace as f64 / n as f64 / RUNS as f64),
-                    format!("{:.2} B/key", mplvec2space as f64 / n as f64 / RUNS as f64),
-                    format!("{:.2} B/key", rustllspace as f64 / n as f64 / RUNS as f64),
+                    format!("{:.2} B/key", mplstackspace / RUNS as u64),
+                    format!("{:.2} B/key", mplqueuespace / RUNS as u64),
+                    format!("{:.2} B/key", mplvec2space / RUNS as u64),
+                    format!("{:.2} B/key", rustllspace / RUNS as u64),
                     format!(
                         "{:.2} B/key",
                         rustdequespace as f64 / n as f64 / RUNS as f64
@@ -571,7 +569,7 @@ mod tests {
             now = Instant::now();
 
             BinaryTree::print(&tree, 0);
-            let space = tree.as_ref().unwrap().get_size() as u64;
+            let space = tree.get_size() as u64;
             for i in 0..size {
                 tree = BinaryTree::remove(tree, i);
             }
@@ -600,8 +598,8 @@ mod tests {
             #[cfg(feature = "heapsize")]
             t.add_row(row![
                 format!("10^{p}"),
-                format!("{:.2} B/key", mplspace as f64 / n as f64 / RUNS as f64),
-                format!("{:.2} B/key", rustspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2} B", mplspace / RUNS as u64),
+                format!("{:.2} B", rustspace / RUNS as u64),
             ]);
             #[cfg(not(feature = "heapsize"))]
             t.add_row(row![
@@ -636,25 +634,11 @@ mod tests {
         Ok(())
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, GetSize)]
     pub struct BinaryTree<T> {
         pub value: T,
         pub left: Option<Box<BinaryTree<T>>>,
         pub right: Option<Box<BinaryTree<T>>>,
-    }
-
-    impl GetSize for BinaryTree<u64> {
-        fn get_heap_size(&self) -> usize {
-            let l = match &self.left {
-                Some(b) => b.get_size(),
-                None => 0,
-            };  
-			let r = match &self.right {
-                Some(b) => b.get_size(),
-                None => 0,
-            };  
-			l + r
-        }
     }
 
     impl<T: Ord + Copy + Display> BinaryTree<T> {
