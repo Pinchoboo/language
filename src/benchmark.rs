@@ -416,7 +416,7 @@ mod tests {
                 std::hint::black_box(vd.pop_front());
             }
             drop(vd);
-            (time, now.elapsed().as_micros() as f64 * 0.001, space)
+            (time, now.elapsed().as_micros() as f64 * 0.001, space as u64)
         };
 
         let mut tpush = table!([H6c->"Push Benchmark"],[
@@ -458,14 +458,11 @@ mod tests {
             {
                 space.add_row(row![
                     format!("10^{p}"),
-                    format!("{:.2} B/key", mplstackspace / RUNS as u64),
-                    format!("{:.2} B/key", mplqueuespace / RUNS as u64),
-                    format!("{:.2} B/key", mplvec2space / RUNS as u64),
-                    format!("{:.2} B/key", rustllspace / RUNS as u64),
-                    format!(
-                        "{:.2} B/key",
-                        rustdequespace as f64 / n as f64 / RUNS as f64
-                    ),
+                    format!("{:.2} B", mplstackspace / RUNS as u64),
+                    format!("{:.2} B", mplqueuespace / RUNS as u64),
+                    format!("{:.2} B", mplvec2space / RUNS as u64),
+                    format!("{:.2} B", rustllspace / RUNS as u64),
+                    format!("{:.2} B/key", rustdequespace / RUNS as u64),
                 ]);
             }
             #[cfg(not(feature = "heapsize"))]
@@ -498,7 +495,7 @@ mod tests {
             f = OpenOptions::new()
                 .write(true)
                 .append(true)
-                .open("./benchmark/push.txt")
+                .open("./benchmark/pushpop_space.txt")
                 .unwrap();
             _ = writeln!(f, "{}", table_to_latex_tabular_inner(space));
         }
