@@ -95,7 +95,7 @@ mod tests {
             let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let finalsize = heap_size();
             drop_set(set);
             assert!(heap_size() == initialsize);
@@ -110,7 +110,7 @@ mod tests {
             let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let finalsize = heap_size();
             drop_set(set);
             assert!(heap_size() == initialsize);
@@ -123,7 +123,7 @@ mod tests {
             let initialsize = heap_size();
             let now = Instant::now();
             let map = map_fill(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let finalsize = heap_size();
             drop_map(map);
             assert!(heap_size() == initialsize);
@@ -135,7 +135,7 @@ mod tests {
             for i in 0..size {
                 m.push(std::hint::black_box(i * i));
             }
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space = m.get_size() as u64;
             drop(m);
             (time, space)
@@ -147,7 +147,7 @@ mod tests {
             for i in 0..size {
                 m.insert(i * 7);
             }
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space = m.get_size() as u64;
             drop(m);
             (time, space)
@@ -158,13 +158,13 @@ mod tests {
             for _ in 0..size {
                 m.insert((m.len() * 7) as u64, m.len() as u64);
             }
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space = m.get_size() as u64;
             drop(m);
             (time, space)
         };
         let mut t = if cfg!(feature = "heapsize") {
-            table!([H7c->"Benchmark Space"],[
+            table!([H7c->"Benchmark Space (byte/key)"],[
                 "Keys",
                 "MPL set",
                 "MPL map",
@@ -174,7 +174,7 @@ mod tests {
                 "Rust map"
             ])
         } else {
-            table!([H7c->"Fill Benchmark"],[
+            table!([H7c->"Fill Benchmark (ns/key)"],[
                 "Keys",
                 "MPL set",
                 "MPL map",
@@ -196,23 +196,23 @@ mod tests {
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2}ms", mplsettime / RUNS as f64),
-                format!("{:.2}ms", mplmaptime / RUNS as f64),
-                format!("{:.2}ms", mplsetfloattime / RUNS as f64),
-                format!("{:.2}ms", rustvectime / RUNS as f64),
-                format!("{:.2}ms", rustsettime / RUNS as f64),
-                format!("{:.2}ms", rustmaptime / RUNS as f64)
+                format!("{:.2}", 1000f64 * mplsettime / n as f64 / RUNS as f64),
+                format!("{:.2}", 1000f64 * mplmaptime / n as f64 / RUNS as f64),
+                format!("{:.2}", 1000f64 * mplsetfloattime / n as f64 / RUNS as f64),
+                format!("{:.2}", 1000f64 * rustvectime / n as f64 / RUNS as f64),
+                format!("{:.2}", 1000f64 * rustsettime / n as f64 / RUNS as f64),
+                format!("{:.2}", 1000f64 * rustmaptime / n as f64 / RUNS as f64)
             ]);
             #[cfg(feature = "heapsize")]
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2} B", mplsetspace / RUNS as u64),
-                format!("{:.2} B", mplmapspace / RUNS as u64),
-                format!("{:.2} B", mplsetfloatspace / RUNS as u64),
-                format!("{:.2} B", rustvecspace / RUNS as u64),
-                format!("{:.2} B", rustsetspace / RUNS as u64),
-                format!("{:.2} B", rustmapspace / RUNS as u64)
+                format!("{:.2}", mplsetspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2}", mplmapspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2}", mplsetfloatspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2}", rustvecspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2}", rustsetspace as f64 / n as f64 / RUNS as f64),
+                format!("{:.2}", rustmapspace as f64 / n as f64 / RUNS as f64)
             ]);
         }
         #[cfg(feature = "heapsize")]
@@ -253,7 +253,7 @@ mod tests {
             let map = map_fill_half(size);
             let now = Instant::now();
             map_lookup(map, size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             drop_map(map);
             time
         };
@@ -270,11 +270,11 @@ mod tests {
                 }
             }
             std::hint::black_box(r);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             drop(map);
             time
         };
-        let mut t = table!([H3c->"Lookup Benchmark 50% Hit"],[
+        let mut t = table!([H3c->"Lookup Benchmark 50% Hit (ns/key)"],[
             "Keys",
             "MPL map",
             "Rust map",
@@ -284,8 +284,14 @@ mod tests {
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2}ms", average(RUNS, || { mplmap(n) })),
-                format!("{:.2}ms", average(RUNS, || { rustmap(n) })),
+                format!(
+                    "{:.2}",
+                    1000f64 * average(RUNS, || { mplmap(n) }) / n as f64
+                ),
+                format!(
+                    "{:.2}",
+                    1000f64 * average(RUNS, || { rustmap(n) }) / n as f64
+                ),
             ]);
         }
         t.printstd();
@@ -318,16 +324,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let stack = pushstack(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popstack(stack, size);
             assert_eq!(heap_size(), space1);
-            (
-                time,
-                now.elapsed().as_micros() as f64 * 0.001,
-                space2 - space1,
-            )
+            (time, now.elapsed().as_micros() as f64, space2 - space1)
         };
 
         let pushqueue = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("queueInsertN");
@@ -337,16 +339,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let queue = pushqueue(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popqueue(queue, size);
             assert_eq!(heap_size(), space1);
-            (
-                time,
-                now.elapsed().as_micros() as f64 * 0.001,
-                space2 - space1,
-            )
+            (time, now.elapsed().as_micros() as f64, space2 - space1)
         };
 
         let pushvec = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN");
@@ -356,16 +354,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let vec = pushvec(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popvec(vec, size);
             assert_eq!(heap_size(), space1);
-            (
-                time,
-                now.elapsed().as_micros() as f64 * 0.001,
-                space2 - space1,
-            )
+            (time, now.elapsed().as_micros() as f64, space2 - space1)
         };
 
         let pushvec2 = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN2");
@@ -375,16 +369,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let vec = pushvec2(size);
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popvec2(vec, size);
             assert_eq!(heap_size(), space1);
-            (
-                time,
-                now.elapsed().as_micros() as f64 * 0.001,
-                space2 - space1,
-            )
+            (time, now.elapsed().as_micros() as f64, space2 - space1)
         };
 
         let rustslinkedlist = |size| {
@@ -393,14 +383,14 @@ mod tests {
             for i in 0..size {
                 ll.push_front(i);
             }
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let now = Instant::now();
             let space = ll.get_size();
             for _ in 0..size {
                 std::hint::black_box(ll.pop_front());
             }
             drop(ll);
-            (time, now.elapsed().as_micros() as f64 * 0.001, space as u64)
+            (time, now.elapsed().as_micros() as f64, space as u64)
         };
 
         let rustvecdeque = |size| {
@@ -409,17 +399,17 @@ mod tests {
             for i in 0..size {
                 vd.push_front(i);
             }
-            let time = now.elapsed().as_micros() as f64 * 0.001;
+            let time = now.elapsed().as_micros() as f64;
             let space = vd.get_size();
             let now = Instant::now();
             for _ in 0..size {
                 std::hint::black_box(vd.pop_front());
             }
             drop(vd);
-            (time, now.elapsed().as_micros() as f64 * 0.001, space as u64)
+            (time, now.elapsed().as_micros() as f64, space as u64)
         };
 
-        let mut tpush = table!([H6c->"Push Benchmark"],[
+        let mut tpush = table!([H6c->"Push Benchmark (ns/key)"],[
             "Size",
             "MPL linked list FILO",
             "MPL linked list FIFO",
@@ -428,7 +418,7 @@ mod tests {
             "Rust LinkedList",
             "Rust VecDeque",
         ]);
-        let mut tpop = table!([H6c->"Pop Benchmark"],[
+        let mut tpop = table!([H6c->"Pop Benchmark (ns/key)"],[
             "Size",
             "MPL linked list FILO",
             "MPL linked list FIFO",
@@ -437,7 +427,7 @@ mod tests {
             "Rust LinkedList",
             "Rust VecDeque",
         ]);
-        let mut space = table!([H6c->"Space Benchmark"],[
+        let mut space = table!([H6c->"Space Benchmark (byte/key)"],[
             "Size",
             "MPL linked list FILO",
             "MPL linked list FIFO",
@@ -458,32 +448,30 @@ mod tests {
             {
                 space.add_row(row![
                     format!("10^{p}"),
-                    format!("{:.2} B", mplstackspace / RUNS as u64),
-                    format!("{:.2} B", mplqueuespace / RUNS as u64),
-                    format!("{:.2} B", mplvec2space / RUNS as u64),
-                    format!("{:.2} B", rustllspace / RUNS as u64),
-                    format!("{:.2} B", rustdequespace / RUNS as u64),
+                    format!("{:.2}", mplstackspace as f64 / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplqueuespace as f64 / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplvec2space as f64 / RUNS as f64 / n as f64),
+                    format!("{:.2}", rustllspace as f64 / RUNS as f64 / n as f64),
+                    format!("{:.2}", rustdequespace as f64 / RUNS as f64 / n as f64),
                 ]);
             }
             #[cfg(not(feature = "heapsize"))]
             {
                 tpush.add_row(row![
                     format!("10^{p}"),
-                    format!("{mplpushstack:.2}ms"),
-                    format!("{mplpushqueue:.2}ms"),
-                    //format!("{mplpushvec:.2}ms"),
-                    format!("{mplpushvec2:.2}ms"),
-                    format!("{rustpushll:.2}ms"),
-                    format!("{rustpushvecdeque:.2}ms"),
+                    format!("{:.2}", 1000f64 * mplpushstack / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * mplpushqueue / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * mplpushvec2 / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * rustpushll / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * rustpushvecdeque / RUNS as f64 / n as f64),
                 ]);
                 tpop.add_row(row![
                     format!("10^{p}"),
-                    format!("{mplpopstack:.2}ms"),
-                    format!("{mplpopqueue:.2}ms"),
-                    //format!("{mplpopvec:.2}ms"),
-                    format!("{mplpopvec2:.2}ms"),
-                    format!("{rustpopll:.2}ms"),
-                    format!("{rustpopvecdeque:.2}ms"),
+                    format!("{:.2}", 1000f64 * mplpopstack / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * mplpopqueue / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * mplpopvec2 / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * rustpopll / RUNS as f64 / n as f64),
+                    format!("{:.2}", 1000f64 * rustpopvecdeque / RUNS as f64 / n as f64),
                 ]);
             }
         }
@@ -542,11 +530,11 @@ mod tests {
             let space1 = heap_size();
             let mut now = Instant::now();
             let tree = tree_fill(size);
-            let time1 = now.elapsed().as_micros() as f64 * 0.001;
+            let time1 = now.elapsed().as_micros() as f64;
             let space2 = heap_size();
             now = Instant::now();
             tree_empty(tree, size);
-            let time2 = now.elapsed().as_micros() as f64 * 0.001;
+            let time2 = now.elapsed().as_micros() as f64;
             tree_free(tree);
             assert_eq!(space1, heap_size());
             (time1, time2, space2 - space1)
@@ -562,7 +550,7 @@ mod tests {
                 idx += 1;
                 val = val.wrapping_mul(3).wrapping_add(idx);
             }
-            let time1 = now.elapsed().as_micros() as f64 * 0.001;
+            let time1 = now.elapsed().as_micros() as f64;
             now = Instant::now();
 
             BinaryTree::print(&tree, 0);
@@ -570,12 +558,12 @@ mod tests {
             for i in 0..size {
                 tree = BinaryTree::remove(tree, i);
             }
-            let time2 = now.elapsed().as_micros() as f64 * 0.001;
+            let time2 = now.elapsed().as_micros() as f64;
             drop(tree);
             (time1, time2, space)
         };
         #[cfg(not(feature = "heapsize"))]
-        let mut t = table!([H5c->"BinaryTree Benchmark"],[
+        let mut t = table!([H5c->"BinaryTree Benchmark (ns/key)"],[
             "Keys",
             "MPL insert",
             "MPL remove",
@@ -583,7 +571,7 @@ mod tests {
             "Rust remove",
         ]);
         #[cfg(feature = "heapsize")]
-        let mut t = table!([H3c->"BinaryTree Space Benchmark"],[
+        let mut t = table!([H3c->"BinaryTree Space Benchmark (byte/key)"],[
             "Keys",
             "MPL",
             "Rust",
@@ -595,16 +583,16 @@ mod tests {
             #[cfg(feature = "heapsize")]
             t.add_row(row![
                 format!("10^{p}"),
-                format!("{:.2} B", mplspace / RUNS as u64),
-                format!("{:.2} B", rustspace / RUNS as u64),
+                format!("{:.2}", mplspace as f64 / RUNS as f64 / n as f64),
+                format!("{:.2}", rustspace as f64 / RUNS as f64 / n as f64),
             ]);
             #[cfg(not(feature = "heapsize"))]
             t.add_row(row![
                 format!("10^{p}"),
-                format!("{pmltreeinsert:.2}ms"),
-                format!("{pmltreeremove:.2}ms"),
-                format!("{rusttreeinsert:.2}ms"),
-                format!("{rusttreeremove:.2}ms"),
+                format!("{:.2}", pmltreeinsert / RUNS as f64 / n as f64),
+                format!("{:.2}", pmltreeremove / RUNS as f64 / n as f64),
+                format!("{:.2}", rusttreeinsert / RUNS as f64 / n as f64),
+                format!("{:.2}", rusttreeremove / RUNS as f64 / n as f64),
             ]);
         }
         #[cfg(not(feature = "heapsize"))]
