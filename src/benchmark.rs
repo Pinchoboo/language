@@ -10,7 +10,7 @@ mod tests {
         fmt::Debug,
         fs::File,
         mem::take,
-        time::Instant,
+        time::Instant, hint::black_box,
     };
     use std::{fmt::Display, fs::OpenOptions, io::Write, ops::AddAssign};
 
@@ -60,9 +60,9 @@ mod tests {
                 if p != 0 {
                     s.push('&')
                 }
-				s.push('$');
+                s.push('$');
                 s.push_str(c.get_content().as_str());
-				s.push('$');
+                s.push('$');
             }
             s.push_str("\\\\ \\hline\n");
         }
@@ -97,7 +97,7 @@ mod tests {
             let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let finalsize = heap_size();
             drop_set(set);
             assert!(heap_size() == initialsize);
@@ -112,7 +112,7 @@ mod tests {
             let initialsize = heap_size();
             let now = Instant::now();
             let set = set_fill(size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let finalsize = heap_size();
             drop_set(set);
             assert!(heap_size() == initialsize);
@@ -125,7 +125,7 @@ mod tests {
             let initialsize = heap_size();
             let now = Instant::now();
             let map = map_fill(size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let finalsize = heap_size();
             drop_map(map);
             assert!(heap_size() == initialsize);
@@ -137,7 +137,7 @@ mod tests {
             for i in 0..size {
                 m.push(std::hint::black_box(i * i));
             }
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space = m.get_size() as u64;
             drop(m);
             (time, space)
@@ -149,7 +149,7 @@ mod tests {
             for i in 0..size {
                 m.insert(i * 7);
             }
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space = m.get_size() as u64;
             drop(m);
             (time, space)
@@ -160,7 +160,7 @@ mod tests {
             for _ in 0..size {
                 m.insert((m.len() * 7) as u64, m.len() as u64);
             }
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space = m.get_size() as u64;
             drop(m);
             (time, space)
@@ -188,6 +188,7 @@ mod tests {
         };
         for p in 2..9 {
             let n = 10u64.pow(p);
+			black_box(mplset(black_box(1000)));
             let (mplsettime, mplsetspace) = sum2(RUNS, || mplset(n));
             let (mplsetfloattime, mplsetfloatspace) = sum2(RUNS, || mplsetfloat(n));
             let (mplmaptime, mplmapspace) = sum2(RUNS, || mplmap(n));
@@ -198,12 +199,12 @@ mod tests {
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!("{:.2}", 1000f64 * mplsettime / n as f64 / RUNS as f64),
-                format!("{:.2}", 1000f64 * mplmaptime / n as f64 / RUNS as f64),
-                format!("{:.2}", 1000f64 * mplsetfloattime / n as f64 / RUNS as f64),
-                format!("{:.2}", 1000f64 * rustvectime / n as f64 / RUNS as f64),
-                format!("{:.2}", 1000f64 * rustsettime / n as f64 / RUNS as f64),
-                format!("{:.2}", 1000f64 * rustmaptime / n as f64 / RUNS as f64)
+                format!("{:.2}", mplsettime / n as f64 / RUNS as f64),
+                format!("{:.2}", mplmaptime / n as f64 / RUNS as f64),
+                format!("{:.2}", mplsetfloattime / n as f64 / RUNS as f64),
+                format!("{:.2}", rustvectime / n as f64 / RUNS as f64),
+                format!("{:.2}", rustsettime / n as f64 / RUNS as f64),
+                format!("{:.2}", rustmaptime / n as f64 / RUNS as f64)
             ]);
             #[cfg(feature = "heapsize")]
             t.add_row(row![
@@ -255,7 +256,7 @@ mod tests {
             let map = map_fill_half(size);
             let now = Instant::now();
             map_lookup(map, size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             drop_map(map);
             time
         };
@@ -272,7 +273,7 @@ mod tests {
                 }
             }
             std::hint::black_box(r);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             drop(map);
             time
         };
@@ -281,19 +282,13 @@ mod tests {
             "MPL map",
             "Rust map",
         ]);
-        for p in 2..8 {
+        for p in 2..9 {
             let n = 10u64.pow(p);
             t.add_row(row![
                 //format!("{runs}"),
                 format!("10^{p}"),
-                format!(
-                    "{:.2}",
-                    1000f64 * average(RUNS, || { mplmap(n) }) / n as f64
-                ),
-                format!(
-                    "{:.2}",
-                    1000f64 * average(RUNS, || { rustmap(n) }) / n as f64
-                ),
+                format!("{:.2}", average(RUNS, || { mplmap(n) }) / n as f64),
+                format!("{:.2}", average(RUNS, || { rustmap(n) }) / n as f64),
             ]);
         }
         t.printstd();
@@ -326,12 +321,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let stack = pushstack(size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popstack(stack, size);
             assert_eq!(heap_size(), space1);
-            (time, now.elapsed().as_micros() as f64, space2 - space1)
+            (time, now.elapsed().as_nanos() as f64, space2 - space1)
         };
 
         let pushqueue = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("queueInsertN");
@@ -341,12 +336,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let queue = pushqueue(size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popqueue(queue, size);
             assert_eq!(heap_size(), space1);
-            (time, now.elapsed().as_micros() as f64, space2 - space1)
+            (time, now.elapsed().as_nanos() as f64, space2 - space1)
         };
 
         let pushvec = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN");
@@ -356,12 +351,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let vec = pushvec(size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popvec(vec, size);
             assert_eq!(heap_size(), space1);
-            (time, now.elapsed().as_micros() as f64, space2 - space1)
+            (time, now.elapsed().as_nanos() as f64, space2 - space1)
         };
 
         let pushvec2 = compiler.get_function::<unsafe extern "C" fn(u64) -> u64>("vecInsertN2");
@@ -371,12 +366,12 @@ mod tests {
             let space1 = heap_size();
             let now = Instant::now();
             let vec = pushvec2(size);
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space2 = heap_size();
             let now = Instant::now();
             popvec2(vec, size);
             assert_eq!(heap_size(), space1);
-            (time, now.elapsed().as_micros() as f64, space2 - space1)
+            (time, now.elapsed().as_nanos() as f64, space2 - space1)
         };
 
         let rustslinkedlist = |size| {
@@ -385,14 +380,14 @@ mod tests {
             for i in 0..size {
                 ll.push_front(i);
             }
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let now = Instant::now();
             let space = ll.get_size();
             for _ in 0..size {
                 std::hint::black_box(ll.pop_front());
             }
             drop(ll);
-            (time, now.elapsed().as_micros() as f64, space as u64)
+            (time, now.elapsed().as_nanos() as f64, space as u64)
         };
 
         let rustvecdeque = |size| {
@@ -401,14 +396,14 @@ mod tests {
             for i in 0..size {
                 vd.push_front(i);
             }
-            let time = now.elapsed().as_micros() as f64;
+            let time = now.elapsed().as_nanos() as f64;
             let space = vd.get_size();
             let now = Instant::now();
             for _ in 0..size {
                 std::hint::black_box(vd.pop_front());
             }
             drop(vd);
-            (time, now.elapsed().as_micros() as f64, space as u64)
+            (time, now.elapsed().as_nanos() as f64, space as u64)
         };
 
         let mut tpush = table!([H6c->"Push Benchmark (ns/key)"],[
@@ -461,19 +456,19 @@ mod tests {
             {
                 tpush.add_row(row![
                     format!("10^{p}"),
-                    format!("{:.2}", 1000f64 * mplpushstack / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * mplpushqueue / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * mplpushvec2 / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * rustpushll / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * rustpushvecdeque / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplpushstack / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplpushqueue / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplpushvec2 / RUNS as f64 / n as f64),
+                    format!("{:.2}", rustpushll / RUNS as f64 / n as f64),
+                    format!("{:.2}", rustpushvecdeque / RUNS as f64 / n as f64),
                 ]);
                 tpop.add_row(row![
                     format!("10^{p}"),
-                    format!("{:.2}", 1000f64 * mplpopstack / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * mplpopqueue / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * mplpopvec2 / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * rustpopll / RUNS as f64 / n as f64),
-                    format!("{:.2}", 1000f64 * rustpopvecdeque / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplpopstack / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplpopqueue / RUNS as f64 / n as f64),
+                    format!("{:.2}", mplpopvec2 / RUNS as f64 / n as f64),
+                    format!("{:.2}", rustpopll / RUNS as f64 / n as f64),
+                    format!("{:.2}", rustpopvecdeque / RUNS as f64 / n as f64),
                 ]);
             }
         }
@@ -532,11 +527,11 @@ mod tests {
             let space1 = heap_size();
             let mut now = Instant::now();
             let tree = tree_fill(size);
-            let time1 = now.elapsed().as_micros() as f64;
+            let time1 = now.elapsed().as_nanos() as f64;
             let space2 = heap_size();
             now = Instant::now();
             tree_empty(tree, size);
-            let time2 = now.elapsed().as_micros() as f64;
+            let time2 = now.elapsed().as_nanos() as f64;
             tree_free(tree);
             assert_eq!(space1, heap_size());
             (time1, time2, space2 - space1)
@@ -552,7 +547,7 @@ mod tests {
                 idx += 1;
                 val = val.wrapping_mul(3).wrapping_add(idx);
             }
-            let time1 = now.elapsed().as_micros() as f64;
+            let time1 = now.elapsed().as_nanos() as f64;
             now = Instant::now();
 
             BinaryTree::print(&tree, 0);
@@ -560,7 +555,7 @@ mod tests {
             for i in 0..size {
                 tree = BinaryTree::remove(tree, i);
             }
-            let time2 = now.elapsed().as_micros() as f64;
+            let time2 = now.elapsed().as_nanos() as f64;
             drop(tree);
             (time1, time2, space)
         };
@@ -578,7 +573,7 @@ mod tests {
             "MPL",
             "Rust",
         ]);
-        for p in 2..7 {
+        for p in 2..8 {
             let n = 10u64.pow(p);
             let (pmltreeinsert, pmltreeremove, mplspace) = sum3(RUNS, || mpltree(n));
             let (rusttreeinsert, rusttreeremove, rustspace) = sum3(RUNS, || rusttree(n));

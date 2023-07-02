@@ -33,6 +33,11 @@ const MEMSET: &str = "memset";
 const CALLOC: &str = "calloc";
 const MALLOC: &str = "malloc";
 
+const REHASH_CAPACITY_FLAT: u64 = 16;
+const REHASH_CAPACITY_FACTOR: u64 = 3;
+const LOAD_FACTOR_NUMERATOR: u64 = 3;
+const LOAD_FACTOR_DENOMINATOR: u64 = 4;
+
 pub struct Compiler<'ctx, 'a> {
     context: &'ctx Context,
     builder: &'a Builder<'ctx>,
@@ -2950,12 +2955,12 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 tombs.into_int_value(),
                                 "",
                             ),
-                            self.context.i64_type().const_int(4, false),
+                            self.context.i64_type().const_int(LOAD_FACTOR_DENOMINATOR, false),
                             "",
                         ),
                         self.builder.build_int_mul(
                             capacity_before_rehash.into_int_value(),
-                            self.context.i64_type().const_int(3, false),
+                            self.context.i64_type().const_int(LOAD_FACTOR_NUMERATOR, false),
                             "",
                         ),
                         "cond",
@@ -3703,10 +3708,10 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                                 "",
                             )
                             .into_int_value(),
-                        self.context.i64_type().const_int(3, false),
+                        self.context.i64_type().const_int(REHASH_CAPACITY_FACTOR, false),
                         "",
                     ),
-                    self.context.i64_type().const_int(16, false),
+                    self.context.i64_type().const_int(REHASH_CAPACITY_FLAT, false),
                     "",
                 );
 
