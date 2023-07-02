@@ -60,7 +60,9 @@ mod tests {
                 if p != 0 {
                     s.push('&')
                 }
+				s.push('$');
                 s.push_str(c.get_content().as_str());
+				s.push('$');
             }
             s.push_str("\\\\ \\hline\n");
         }
