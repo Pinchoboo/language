@@ -586,7 +586,7 @@ impl<'ctx, 'a, 'b> Compiler<'ctx, 'a> {
                 Path::new("./out/main.asm"),
             );*/
 
-            let err = Command::new("clang")
+            let err = Command::new("clang-12")
                 .arg("-no-pie")
                 .arg("./out/program.ll")
                 .arg("-o")
