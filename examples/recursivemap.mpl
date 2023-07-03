@@ -1,6 +1,6 @@
 [RecursiveMap] = [
-	NEXT => [RecursiveMap]
-	VALUE = int
+	NEXT -> [RecursiveMap]
+	VALUE -> int
 ]
 
 fn main(){
